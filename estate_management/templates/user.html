@@ -1,0 +1,113 @@
+{% extends 'layout.html' %}
+{% block content %}
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/css/intlTelInput.css">
+
+    <div class="jumbotron">
+      <div align='center'>
+        <h1 >Please fill the registration form</h1>
+
+        <div class="container">
+          <form  method="POST" action = "" enctype="multipart/form-data">
+            {{ form.hidden_tag() }}
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.firstname(class='form-control', placeholder="First Name")  }}
+              </div>
+            </div>
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.lastname(class='form-control', placeholder="Last Name")  }}
+              </div>
+            </div>
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.username(class='form-control', placeholder="Username")  }}
+              </div>
+            </div>
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.password(class='form-control', placeholder="Password")  }}
+              </div>
+            </div>
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.pass_confirm(class='form-control', placeholder="Confirm Password")  }}
+              </div>
+            </div>
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.streetname(class='form-control')  }}
+              </div>
+            </div>
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.housenumber(class='form-control')  }}
+              </div>
+            </div>
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.flatnumber(class='form-control')  }}
+              </div>
+            </div>
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.dateofbirth(class='form-control', placeholder="dd/mm/yyyy")  }}
+              </div>
+            </div>
+
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.gender(class="form-control")  }}
+              </div>
+            </div>
+
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.telephone(class='form-control', placeholder="Telephone")  }}
+              </div>
+            </div>
+
+            
+            {% if code_submit %}
+              <div class="col-auto my-1">
+                <div class="form-group col-md-4">
+                  {{form.code(class="form-control", type='hidden', value=code_submit.code) }}
+                </div>
+              </div>
+
+              <div class="col-auto my-1">
+                <div class="form-group col-md-4">
+                  {{form.code_fullname(class="form-control", type='hidden', value=code_submit.name) }}
+                </div>
+              </div>
+            {% endif %}
+
+
+
+            <div class="form-group">
+                {{ form.submit(class="btn btn-primary") }}
+            </div>
+          </form>
+
+          <p><a class="btn btn-secondary" href="{{url_for('core.login')}}">Sign In instead</a></p>
+
+        </div>
+      </div>
+    </div>
+    <script src="../static/house_numbers.js"></script>
+    <script src="../static/normal_phonenumbers.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/js/intlTelInput.min.js"></script>
+
+
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="jumbotron">
+  <h1>Estate enquiry list:</h1>
+  <table border="2" cellspacing="0" cellpadding="10" width="" align="center" bgcolor="">
+    <tr align="center">
+      <th>ID</th>
+      <th>Enquiry</th>
+      <th>Date</th>
+      <th>Requester</th>
+    </tr>
+
+  {% for enquiry in enquiries %}
+    <tr align="center" >
+      <td>{{enquiry.id}}</td>
+      <td>{{enquiry.enquiry}}</td>
+      <td>{{enquiry.enquiry_date}}</td>
+      <td><a href={{url_for("core.viewprofile", user_id=enquiry.user_id)}}>{{enquiry.user_id}}</a></td>
+    </tr>
+
+  {% endfor %}
+
+  </table>
+
+
+</div>
+
+{% endblock content %}

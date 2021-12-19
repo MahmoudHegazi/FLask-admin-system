@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="jumbotron">
+  <h1>Estate staff list:</h1>
+  <table border="2" cellspacing="0" cellpadding="10" width="" align="center" bgcolor="">
+    <tr align="center">
+      <th>ID</th>
+      <th>First name</th>
+      <th>Last name</th>
+      <th>Date of Birth</th>
+      <th>Gender</th>
+      <th>Phone Number</th>
+      <th>Job Description</th>
+      <th>Boss</th>
+    </tr>
+
+  {% for staff in staffs %}
+    <tr align="center" >
+      <td>{{staff.id}}</td>
+      <td>{{staff.firstname}}</td>
+      <td>{{staff.lastname}}</td>
+      <td>{{staff.dateofbirth}}</td>
+      <td>{{staff.gender}}</td>
+      <td>+234{{staff.telephone}}</td>
+      <td>{{staff.jobdescription}}</td>
+      <td><a href={{url_for("core.viewprofile", user_id=staff.user_id)}}>{{staff.user_id}}</a></td>
+    </tr>
+
+      {% endfor %}
+
+  </table>
+
+
+</div>
+
+{% endblock content %}

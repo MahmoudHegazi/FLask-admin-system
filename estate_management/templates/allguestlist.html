@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="jumbotron">
+  <h1>Estate visitors list:</h1>
+  <table border="2" cellspacing="0" cellpadding="10" width="" align="center" bgcolor="">
+    <tr align="center">
+      <th>ID</th>
+      <th>First name</th>
+      <th>Last name</th>
+      <th>Gender</th>
+      <th>Phone Number</th>
+      <th>Visitation Date</th>
+      <th>Host</th>
+    </tr>
+
+  {% for guest in guests %}
+    <tr align="center" >
+      <td>{{guest.id}}</td>
+      <td>{{guest.firstname}}</td>
+      <td>{{guest.lastname}}</td>
+      <td>{{guest.gender}}</td>
+      <td>+234{{guest.telephone}}</td>
+      <td>{{guest.visit_date}}</td>
+      <td><a href={{url_for("core.viewprofile", user_id=guest.user_id)}}>{{guest.user_id}}</a></td>
+    </tr>
+
+      {% endfor %}
+
+  </table>
+
+</div>
+
+{% endblock content %}

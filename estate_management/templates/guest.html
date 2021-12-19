@@ -1,0 +1,54 @@
+{% extends "layout.html" %}
+{% block content %}
+<form action="" method="POST">
+
+  <div class="jumbotron">
+    <div align='center'>
+      <h1 >Book guest</h1>
+
+      <div class="container">
+        <form  method="POST" action = "" enctype="multipart/form-data">
+          {{ form.hidden_tag() }}
+
+          <div class="col-auto my-1">
+            <div class="form-group col-md-4">
+              {{form.firstname(class='form-control', placeholder="First Name")  }}
+            </div>
+          </div>
+
+          <div class="col-auto my-1">
+            <div class="form-group col-md-4">
+              {{form.lastname(class='form-control', placeholder="Last Name")  }}
+            </div>
+          </div>
+
+          <div class="col-auto my-1">
+            <div class="form-group col-md-4">
+              {{form.gender(class='form-control')  }}
+            </div>
+          </div>
+
+          <div class="col-auto my-1">
+            <div class="form-group col-md-4">
+              {{form.visit_date(class='form-control')  }}
+            </div>
+          </div>
+
+          <div class="col-auto my-1">
+            <div class="form-group col-md-4">
+              {{ form.telephone(class="form-control-file", placeholder="Telephone") }}
+            </div>
+          </div>
+
+          <div class="form-group">
+              {{ form.submit(class="btn btn-primary") }}
+          </div>
+        </form>
+
+      </div>
+    </div>
+  </div>
+
+</form>
+
+{% endblock content %}

@@ -1,0 +1,36 @@
+{% extends "layout.html" %}
+{% block content %}
+<form action="" method="POST">
+
+  <div class="jumbotron">
+    <div align='center'>
+      <h1 >Welcome to the enquiries/complaints page for {{current_user.username}}</h1>
+
+
+      <div class="container">
+        <form  method="POST" action = "" enctype="multipart/form-data">
+          {{ form.hidden_tag() }}
+
+          <div class="col-auto my-1">
+            <div class="form-group col-md-4">
+              {{form.enquiry(class='form-control', placeholder="Type in your enquiries/complaints")  }}
+            </div>
+          </div>
+
+          <div class="col-auto my-1">
+            <div class="form-group col-md-4">
+              {{form.enquiry_date(class='form-control')  }}
+            </div>
+          </div>
+
+          <div class="form-group">
+              {{ form.submit(class="btn btn-primary") }}
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</form>
+
+{% endblock content %}

@@ -1,0 +1,30 @@
+{% extends "layout.html" %}
+{% block content %}
+<form action="" method="POST">
+
+  <div class="jumbotron">
+    <div align='center'>
+      <h1 >Choose your role</h1>
+
+
+      <div class="container">
+        <form  method="POST" action = "" enctype="multipart/form-data">
+          {{ form.hidden_tag() }}
+
+          <div class="col-auto my-1">
+            <div class="form-group col-md-4">
+            {{form.role(class='form-control')  }}
+            </div>
+          </div>
+
+          <div class="form-group">
+              {{ form.submit(class="btn btn-primary") }}
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</form>
+
+{% endblock content %}

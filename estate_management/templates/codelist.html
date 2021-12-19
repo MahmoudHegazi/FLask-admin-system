@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="jumbotron">
+  <h1>Registration code list:</h1>
+  <table border="2" cellspacing="0" cellpadding="10" width="" align="center" bgcolor="">
+    <tr align="center">
+      <th>ID</th>
+      <th>Date</th>
+      <th>Code</th>
+      <th>Generating Guard</th>
+    </tr>
+
+    {% for code in codes %}
+    <tr align="center" >
+      <td>{{code.id}}</td>
+      <td>{{code.requested_for}}</td>
+      <td>{{code.gen_date}}</td>
+      <td>{{code.gen_code}}</td>
+      <td><a href={{url_for("core.viewprofile", user_id=code.user_id)}}>{{code.user_id}}</a></td>
+    </tr>
+
+    {% endfor %}
+
+    </table>
+
+</div>
+
+{% endblock content %}

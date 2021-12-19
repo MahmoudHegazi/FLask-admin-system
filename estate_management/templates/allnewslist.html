@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="jumbotron">
+  <h1>Estate news:</h1>
+  <ul>
+    {% for publication in publications %}
+      <p>{{publication}}</p>
+
+    {% endfor %}
+  </ul>
+
+
+</div>
+
+{% endblock content %}

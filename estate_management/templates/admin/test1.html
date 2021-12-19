@@ -1,0 +1,7 @@
+{% extends 'admin/model/list.html' %}
+
+
+{% block body %}
+    <h3 class="jumbotron text-center p-3">Super Admin Users View ({{current_user.username}}) </h3>
+    {{ super() }}
+{% endblock %}

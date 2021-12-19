@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="jumbotron">
+  <h1>Estate services request list:</h1>
+  <table border="2" cellspacing="0" cellpadding="10" width="" align="center" bgcolor="">
+    <tr align="center">
+      <th>ID</th>
+      <th>Service</th>
+      <th>Date</th>
+      <th>Requester</th>
+    </tr>
+
+    {% for service in services %}
+    <tr align="center" >
+      <td>{{service.id}}</td>
+      <td>{{service.service_requested}}</td>
+      <td>{{service.request_date}}</td>
+      <td><a href={{url_for("core.viewprofile", user_id=service.user_id)}}>{{service.user_id}}</a></td>
+    </tr>
+
+    {% endfor %}
+
+    </table>
+
+</div>
+
+{% endblock content %}
