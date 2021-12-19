@@ -14,6 +14,9 @@ The complete flask admin system is here, you can find anything you need in flask
 # Database
 * SQLite
 
+# admin endpoint:
+1. localhost:[port]/admin
+
 # what I need to use this app
 1. python 1+ year experince
 2. Experience of JavaScript is required to customize or understand some views
