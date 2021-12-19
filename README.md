@@ -25,6 +25,9 @@ The complete flask admin system is here, you can find anything you need in flask
 (protect for super admin)
 ![image](https://user-images.githubusercontent.com/55125302/146686030-7577e500-088b-4339-a262-16765ae8ad5f.png)
 
+![image](https://user-images.githubusercontent.com/55125302/146686979-ee7f9cbe-75c7-4fe8-beae-6658b9926a93.png)
+
+
 
 #### Developed By Python King
 
