@@ -9,6 +9,10 @@ The complete flask admin system is here, you can find anything you need in flask
 4. Flask-WTF
 5. phonenumbers
 6. flask_babelex
+7. sqlalchemy
+
+# Database
+* SQLite
 
 # what I need to use this app
 1. python 1+ year experince
