@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block content %}
+ {% if data %}
+ <style>
+
+   .the_timer {
+     font-size: 2em;
+     font-family: "Times New Roman", Times, serif;
+   }
+
+   .separator {
+     background: lightgray;
+     border: 1px solid black;
+     padding: 5px;
+     margin-left: 3px;
+   }
+   .separator1{
+     margin-left: 3px;
+     font-size: 1.2em;
+   }
+
+ </style>
+ <p id="counter_message">Please visit the customer before this counter becomes 0:00 or else you will lose 1 star</p>
+ <h2 id="thetime_id"></h2>
+
+
+ {% endif %}
+ <script>
+   {% if data %}
+   let can_start = true;
+   const data = {
+     handyman:  '{{data.handyman}}',
+     service_meta: '{{data.service_meta}}',
+     service_id: '{{data.service_id}}',
+     service_code: '{{data.service_code}}'
+   };
+   filter_object(data);
+
+   const postDataNonAsync = function(url='', data={}){
+     fetch(url, {
+       method: "POST",
+       credentials: "same-origin",
+       headers:{
+         "Content-Type": "application/json"
+       },
+       body: JSON.stringify(data)
+     });
+   }
+   const postData = async function (url="/service_counter", data={}){
+     const response = await fetch(url, {
+       method: "POST",
+       credentials: "same-origin",
+       headers:{
+         "Content-Type": "application/json"
+       },
+       body: JSON.stringify(data)
+     });
+     try{
+       const res = await response.json();
+       return res;
+     }catch(err){
+       console.error(err);
+     }
+   };
+
+  /* handle multible flask get request within js */
+  {% if redirected %}
+  if (typeof(Storage) !== "undefined") {
+
+    // Store
+    if (localStorage.getItem("redirected") && localStorage.getItem("redirected") == "True"){
+      localStorage.setItem("redirected", "False");
+    } else {
+      const urlParams = new URLSearchParams(window.location.search);
+      const myParam = urlParams.get('redirected');
+      if (!myParam){
+        // for more sync use flask with js
+        {% if start %}
+          fetch('/startcounter/' + data.service_id + '/' + data.service_meta);
+        {% endif %}
+        localStorage.setItem("redirected", "True");
+        window.location.href = window.location.href + "&redirected=True";
+      }
+
+    }
+  }
+  {% endif %}
+
+    /* counter part */
+
+    const message_container = document.getElementById("counter_message");
+    function giveMeHTMLTimeFormat(float_num){
+      const newFolat = float_num.toString();
+      const timesplited = newFolat.split(".");
+      if (timesplited.length < 2){ return float_num; }
+      const secondsList = [];
+      for (let i=0; i<timesplited[1].length; i++){
+        secondsList.push(timesplited[1][i]);
+      }
+      if (secondsList.length < 2){ return float_num; }
+      const htmlResult = `<span class="separator">${timesplited[0]}</span><span class="separator1">:</span><span class="separator">${secondsList[0]}</span><span class="separator">${secondsList[1]}</span>`;
+      return htmlResult;
+    }
+
+    let myTimeout, myUpdateout;
+    let index = 0.00;
+    let timer = 0;
+    let downCounter = 1800000;
+    // if changed this change it in python counter_update this will wait 10 minutes then check status
+    let serverUpdateIndex = 60;
+
+    function below(num){
+      strnum = toString(num).split(".")
+      if (strnum.length > 0){
+        decmialNum = Number(strnum[1])
+        if (decmialNum > 59){
+          decmialNum = 59;
+          return toFloat(strnum + "." + decmialNum)
+        }
+
+      }
+      return strnum
+
+
+    }
+    function myGreating() {
+
+      timer += 1;
+      console.log(timer%serverUpdateIndex == 0, timer);
+      if (Number.isInteger(index)){
+        index = index.toFixed(2);
+        index -= 0.41;
+      } else {
+        index = index.toFixed(2);
+        index -= 0.01;
+      }
+      if (index < 0){
+        // get request to confirm
+        message_container.innerText = "Time End";
+        myStopFunction();
+        return false;
+      }
+      if (timer % serverUpdateIndex == 0){
+        updateTimer();
+      }
+      downCounter -= 1000;
+      document.getElementById("thetime_id").innerHTML = giveMeHTMLTimeFormat(index.toFixed(2));
+      myTimeout = setTimeout(myGreating, 1000);
+
+    }
+
+    function myStopFunction() {
+      clearTimeout(myTimeout);
+      clearTimeout(myUpdateout);
+    }
+
+    async function updateTimer(){
+      const updateStatus = await fetch(`/counter_update/${data.service_id}/${data.service_meta}`);
+      const res = await updateStatus.json();
+      console.log("Update Server", res);
+      if (res.code == 200){
+        if (res.status == 'in_progress'){
+          index = res.data
+          createFlashMessage('primary', `The Task still in progress please hury up only time_remaining ${res.data}`);
+        } else if (res.status == 'completed'){
+          myStopFunction();
+          createFlashMessage('success', res.message);
+        } else if (res.status == 'canceled'){
+          myStopFunction();
+          index = 0.00;
+          createFlashMessage('danger', res.message);
+        } else {
+          myStopFunction();
+          createFlashMessage('danger', res.message);
+        }
+
+      } else {
+        createFlashMessage('error', 'unable to update counter please restart.. ');
+      }
+    }
+    // end of counter
+
+    function createFlashMessage(type, message){
+      const getFlashes = document.querySelector(".flashes");
+      if (getFlashes){
+        getFlashes.innerHTML = "";
+        const error_message1 = `<div class="alert alert-${type} alert-dismissible fade show" role="alert"><strong>${type}!</strong>${message}<button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">×</span></button></div>`;
+        getFlashes.innerHTML += error_message1;
+      } else {
+        let getNav = document.querySelector("nav");
+        if (getNav){
+          getNav.outerHTML += '<ul class="flashes"></ul>';
+          const getFlashes = document.querySelector(".flashes");
+          getFlashes.innerHTML = "";
+          const error_message1 = `<div class="alert alert-${type} alert-dismissible fade show" role="alert"><strong>${type}!</strong>${message}<button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">×</span></button></div>`;
+          getFlashes.innerHTML += error_message1;
+        }
+
+      }
+    }
+    function filter_object(data) {
+      if(!isNaN(data.handyman) && !isNaN(data.service_meta) && !isNaN(data.service_id)){
+        data.handyman = Number(data.handyman);
+        data.service_meta = Number(data.service_meta);
+        data.service_id = Number(data.service_id);
+        return true;
+      } else {
+        createFlashMessage('Error', 'unexpected error occurred while processing your request contact support');
+        can_start = false;
+        return false;
+      }
+    }
+
+
+    // send post to start counter
+    const start_counter_now = async ()=>{
+      let res = await postData("/service_counter", data);
+      console.log(res);
+      if (res.code == 200 && res.status == 'completed'){
+        createFlashMessage('success', res.message);
+      } else if (res.code == 200 && res.status == 'in_progress'){
+        console.log(res);
+        index = res.data
+        myTimeout = setTimeout(myGreating, 1000);
+        myUpdateout = setTimeout(updateTimer, 1100);
+        createFlashMessage('primary', res.message);
+      } else if (res.code == 200 && res.status == 'canceled'){
+        createFlashMessage('danger', res.message);
+      } else if (res.message){
+        createFlashMessage('warning', res.message);
+      } else {
+        createFlashMessage('danger', 'Unexpted error contact support.. ');
+      }
+    }
+    start_counter_now();
+    console.log(data);
+  {% endif %}
+
+ </script>
+{% endblock content %}

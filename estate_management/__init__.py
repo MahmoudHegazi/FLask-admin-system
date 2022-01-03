@@ -18,12 +18,26 @@ from flask_principal import Principal, Permission, RoleNeed, identity_loaded, Us
 import os.path as op
 import stripe
 from flask_admin import Admin
+from twilio.rest import Client
+import rncryptor
 
 stripe_key = 'pk_test_6pRNASCoBOKtIshFeQd4XMUh'
 stripe.api_key = "sk_test_BQokikJOvBiI2HlWgH4olfQ2"
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'mysecretkey'
+cryptor = rncryptor.RNCryptor()
+
+# This required system variables to send messages
+# note you have to setup this variables and export before start the server
+# for the first time or restart the the server if u on cloud
+twilio_sid = os.environ['TWILIO_SID']
+twilio_token = os.environ['TWILIO_TOKEN']
+twilio_number = os.environ['TWILIO_NUMBER']
+
+print(twilio_sid)
+print(twilio_token)
+
 #app.config['SECURITY_RECOVERABLE'] = True
 #app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024
 #app.config['UPLOAD_EXTENSIONS'] = ['.jpeg', '.jpg', '.png']
@@ -32,7 +46,8 @@ app.config['SECRET_KEY'] = 'mysecretkey'
 static_path = op.join(op.dirname(__file__), 'static')
 basedir = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///'+os.path.join(basedir,'data.sqlite')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
+
 
 
 db = SQLAlchemy(app)

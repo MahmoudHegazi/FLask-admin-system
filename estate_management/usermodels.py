@@ -2,7 +2,9 @@ from estate_management import db, login_manager, getMeLoggedUser
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
-
+from estate_management.admin.code_gen import unique_code_generator, strpool
+import phonenumbers
+from sqlalchemy.orm import backref
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -44,6 +46,39 @@ class Estate(db.Model, UserMixin):
 
     def __repr__(self):
         return f"{self.name}"
+
+
+class ServiceType(db.Model, UserMixin):
+    __tablename__ = 'service_type'
+    id = db.Column(db.Integer, nullable=False, primary_key=True)
+    service = db.Column(db.String, nullable=False)
+    handymen = db.relationship('Handymen', backref='service_handymen', lazy='dynamic')
+    # if you decide to remove a serivce you agree on remove the handymen provide it
+    # services = db.relationship('Service', cascade="all,delete", backref=backref("service_type", lazy="joined"))
+    services = db.relationship('Service', cascade="all,delete", back_populates="serivce", lazy="joined")
+
+    def __init__(self, service):
+        self.service = service
+
+    def insert(self):
+        db.session.add(self)
+        db.session.commit()
+
+    def update(self):
+        db.session.commit()
+
+    def delete(self):
+        db.session.delete(self)
+        db.session.commit()
+
+
+    def format(self):
+        return {
+        'service': self.service,
+        }
+
+    def __repr__(self):
+        return f"{self.service}"
 
 
 
@@ -128,7 +163,7 @@ class User(db.Model, UserMixin):
     # this can be db.PrimaryKeyConstraint if you want it to be a primary key
     __table_args__ =  (db.UniqueConstraint('username'),db.UniqueConstraint('telephone'), db.PrimaryKeyConstraint('id'),)
     id = db.Column(db.Integer, primary_key=True)
-    profile_image = db.Column(db.String(20), nullable=False, default='default_profile.png')
+    profile_image = db.Column(db.String(20), nullable=False, default='no_image.png')
     firstname = db.Column(db.String, nullable=False)
     lastname = db.Column(db.String, nullable=False)
     dateofbirth = db.Column(db.DateTime, nullable=False)
@@ -136,8 +171,8 @@ class User(db.Model, UserMixin):
     username = db.Column(db.String, nullable=False, unique=True)
     password_hash = db.Column(db.String, nullable=False)
     # text can accept integer
-    streetname = db.Column(db.Text, nullable=False)
-    housenumber = db.Column(db.String, nullable=False)
+    streetname = db.Column(db.Text, nullable=False, default=None)
+    housenumber = db.Column(db.String, nullable=False, default=None)
     flatnumber = db.Column(db.String, nullable=True, default=None)
     gender = db.Column(db.String, nullable=False)
     telephone = db.Column(db.Text, nullable=False, unique=True)
@@ -161,10 +196,9 @@ class User(db.Model, UserMixin):
         self.housenumber = housenumber
         self.flatnumber = flatnumber
         self.gender = gender
-        self.telephone = telephone
+        self.telephone = phonenumbers.format_number(phonenumbers.parse(str(telephone),None), phonenumbers.PhoneNumberFormat.E164)
         self.role = role
         self.estate = estate
-
 
     def insert(self):
         db.session.add(self)
@@ -178,7 +212,7 @@ class User(db.Model, UserMixin):
         db.session.commit()
 
     def __repr__(self):
-        return f"NAME: {self.firstname} {self.lastname}, DATE OF BIRTH: {self.dateofbirth}, GENDER: {self.gender}, PHONE NUMBER: +234{self.telephone}, ADDRESS: {self.flatnumber}, number {self.housenumber}, {self.streetname}"
+        return f"NAME: {self.firstname} {self.lastname}, DATE OF BIRTH: {self.dateofbirth}, GENDER: {self.gender}, PHONE NUMBER: {self.telephone}, ADDRESS: {self.flatnumber}, number {self.housenumber}, {self.streetname}"
 
     def check_password(self,password):
         return check_password_hash(self.password_hash,password)
@@ -226,17 +260,23 @@ class Guest(db.Model):
     lastname = db.Column(db.String, nullable=False)
     gender = db.Column(db.String, nullable=False)
     telephone = db.Column(db.Text, nullable=False)
+    guest_code = db.Column(db.String, nullable=False)
+    approved = db.Column(db.Boolean,nullable=False, default=False)
+    notification_sent = db.Column(db.Boolean,nullable=False, default=False)
 
-    def __init__(self, user_id, visit_date, firstname, lastname, gender, telephone):
+    def __init__(self, user_id, visit_date, firstname, lastname, gender, telephone, guest_code):
+        banned_list = [co.guest_code for co in self.query.all()]
         self.user_id = user_id
         self.visit_date = visit_date
         self.firstname = firstname
         self.lastname = lastname
         self.gender = gender
-        self.telephone = telephone
+        self.telephone = phonenumbers.format_number(phonenumbers.parse(str(telephone),None), phonenumbers.PhoneNumberFormat.E164)
+        self.guest_code = unique_code_generator(strpool, banned_list)
+
 
     def __repr__(self):
-        return f"Name: {self.firstname} {self.lastname}, Sex: {self.gender}, Phone Number: +234{self.telephone}, Date: {self.visit_date}, Host: {self.user_id}"
+        return f"Name: {self.firstname} {self.lastname}, Sex: {self.gender}, Phone Number: {self.telephone}, Date: {self.visit_date}, Host: {self.user_id}"
 
     def insert(self):
         db.session.add(self)
@@ -267,7 +307,7 @@ class Staff(db.Model):
         self.lastname = lastname
         self.dateofbirth = dateofbirth
         self.gender = gender
-        self.telephone = telephone
+        self.telephone = phonenumbers.format_number(phonenumbers.parse(str(telephone),None), phonenumbers.PhoneNumberFormat.E164)
         self.jobdescription = jobdescription
 
     def __repr__(self):
@@ -295,12 +335,14 @@ class Code(db.Model):
     user_role = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     user_estate = db.Column(db.Integer, db.ForeignKey('estates.id'), nullable=False)
 
+
     def __init__(self, requested_for, user_role, user_estate, gen_date, gen_code):
+        banned_list = [co.gen_code for co in Code.query.all()]
         self.requested_for = requested_for
         self.user_role = user_role
         self.user_estate = user_estate
         self.gen_date = gen_date
-        self.gen_code = gen_code
+        self.gen_code = unique_code_generator(strpool, banned_list)
 
     def insert(self):
         db.session.add(self)
@@ -320,8 +362,19 @@ class Service(db.Model):
     __tablename__ = 'services'
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'))
-    service_requested = db.Column(db.String, nullable=False)
+    service_requested = db.Column(db.String(50), nullable=False)
     request_date = db.Column(db.DateTime, default=datetime.utcnow)
+    last_approve_date = db.Column(db.DateTime, nullable=True, default=None)
+    code = db.Column(db.String, nullable=True, default=None)
+    salt = db.Column(db.Integer, nullable=True, default=None)
+    approved = db.Column(db.Boolean, nullable=False, default=False)
+    arrived = db.Column(db.Boolean, nullable=False, default=False)
+    service_type = db.Column(db.Integer, db.ForeignKey('service_type.id'), nullable=False)
+    estate_id = db.Column(db.Integer, db.ForeignKey('estates.id'))
+    asigned_to = db.Column(db.Integer, db.ForeignKey('handymen.id'))
+    handyman = db.relationship('Handymen')
+    estate = db.relationship('Estate')
+    serivce = db.relationship('ServiceType', back_populates='services')
 
     def __init__(self, user_id, service_requested, request_date):
         self.user_id = user_id
@@ -380,7 +433,7 @@ class Publication(db.Model):
     news_date = db.Column(db.DateTime, default=datetime.utcnow)
     users = db.relationship('User', back_populates='news')
 
-    def __init__(self, reporter_id, news_date):
+    def __init__(self, user_id, publication, news_date):
         self.user_id = user_id
         self.publication = publication
         self.news_date = news_date
@@ -431,21 +484,126 @@ class Subscription(db.Model):
         db.session.delete(self)
         db.session.commit()
 
+
+class Handymen(db.Model, UserMixin):
+    __tablename__ = 'handymen'
+    # this can be db.PrimaryKeyConstraint if you want it to be a primary key
+    __table_args__ =  (db.UniqueConstraint('telephone'),db.UniqueConstraint('bank_account_number'), db.PrimaryKeyConstraint('id'),)
+    id = db.Column(db.Integer, primary_key=True)
+    passport_photo = db.Column(db.String, nullable=False, default='default_profile.png')
+    fullname = db.Column(db.String, nullable=False, default="HANDYMAN")
+    address = db.Column(db.String, nullable=False)
+    telephone = db.Column(db.Text, nullable=False)
+    bank_account_name = db.Column(db.String, nullable=False)
+    bank_account_number = db.Column(db.Text, nullable=False, unique=True)
+    bank_name = db.Column(db.String, nullable=False)
+    rate = db.Column(db.Integer, nullable=False, default=0)
+    service_type = db.Column(db.Integer, db.ForeignKey('service_type.id'), nullable=False)
+    estate_id = db.Column(db.Integer, db.ForeignKey('estates.id'))
+    estate = db.relationship('Estate')
+
+    def __init__(self,passport_photo, fullname, address, bank_account_name, bank_account_number, bank_name, rate, service_type):
+        self.telephone = phonenumbers.format_number(phonenumbers.parse(str(telephone),None), phonenumbers.PhoneNumberFormat.E164)
+        self.passport_photo = passport_photo
+        self.fullname = fullname
+        self.address = address
+        self.bank_account_name = bank_account_name
+        self.bank_account_number = bank_account_number
+        self.bank_name = bank_name
+        self.rate = rate
+        self.service_type = service_type
+
+    def insert(self):
+        db.session.add(self)
+        db.session.commit()
+
+    def update(self):
+        db.session.commit()
+
+    def delete(self):
+        db.session.delete(self)
+        db.session.commit()
+
+    def __repr__(self):
+        return f"HandyMen: {self.fullname}"
+
+
+class HandyMenNotfications(db.Model):
+    __table_args__ =  (db.PrimaryKeyConstraint('id'), db.UniqueConstraint('code'))
+    __tablename__ = 'handymennotfications'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.Text, nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    service_id = db.Column(db.Integer, db.ForeignKey('services.id'))
+    handyman_id = db.Column(db.Integer, db.ForeignKey('handymen.id'))
+    service = db.relationship('Service')
+    handyman = db.relationship('Handymen')
+    def __init__(self, code, message, service_id, handyman_id):
+        self.code = code
+        self.message = message
+        self.service_id = service_id
+        self.handyman_id = handyman_id
+
+    def __repr__(self):
+        return f"{self.handyman_id}.... Message {self.message}"
+
+    def insert(self):
+        db.session.add(self)
+        db.session.commit()
+
+    def update(self):
+        db.session.commit()
+
+    def delete(self):
+        db.session.delete(self)
+        db.session.commit()
+
+class ServiceMetaData(db.Model):
+    __tablename__ = 'service_metadata'
+    id = db.Column(db.Integer, primary_key=True)
+    canceled = db.Column(db.Boolean, default=False)
+    completed = db.Column(db.Boolean, default=False)
+    in_progress = db.Column(db.Boolean, default=False)
+    approved_date = db.Column(db.DateTime, default=datetime.utcnow)
+    expire_date = db.Column(db.DateTime, nullable=True, default=None)
+    service_id = db.Column(db.Integer, db.ForeignKey('services.id'))
+    handyman_id = db.Column(db.Integer, db.ForeignKey('handymen.id'))
+    service = db.relationship('Service')
+    handyman = db.relationship('Handymen')
+
+    def __init__(self, service_id, handyman_id, expire_date):
+        self.service_id = service_id
+        self.handyman_id = handyman_id
+        self.expire_date = expire_date
+
+
+    def __repr__(self):
+        return f"Service ID: {self.service_id}"
+
+    def insert(self):
+        db.session.add(self)
+        db.session.commit()
+
+    def update(self):
+        db.session.commit()
+
+    def delete(self):
+        db.session.delete(self)
+        db.session.commit()
 # clear and rebuild database comment in proudction
-
-
-
 # add the roles for the app
 """
      uncomment this lines below if you uncommented drop_app and create_all and add superadmin
 """
+
 """
 db.drop_all()
 db.create_all()
 
-n = User(firstname='super', lastname='admin', dateofbirth=datetime.now(), username='admin', password_hash='admin', streetname='streetx', housenumber='1', flatnumber='2', gender='male', telephone=4454545454, role=1, estate=1)
+n = User(firstname='super', lastname='admin', dateofbirth=datetime.now(), username='admin', password_hash='admin', streetname='streetx', housenumber='1', flatnumber='2', gender='male', telephone='+12016466668', role=1, estate=1)
 n.insert()
 """
+
 if Role.query.count() is None or Role.query.count() == 0:
     superAdminRole = Role(name='superadmin')
     estateAdminRole = Role(name='estateadmin')
@@ -453,7 +611,7 @@ if Role.query.count() is None or Role.query.count() == 0:
     occupationRole = Role(name='occupant')
     guestRole = Role(name='guest')
     developerRole = Role(name='developer')
-    tempRole = Role(name='temp')
+    handyManRole = Role(name='handyman')
 
 
     db.session.add(superAdminRole)
@@ -462,5 +620,5 @@ if Role.query.count() is None or Role.query.count() == 0:
     db.session.add(occupationRole)
     db.session.add(guestRole)
     db.session.add(developerRole)
-    db.session.add(tempRole)
+    db.session.add(handyManRole)
     db.session.commit()

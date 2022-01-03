@@ -41,9 +41,9 @@ class UserForm(FlaskForm):
     username = StringField('Username', validators=[DataRequired()])
     password = PasswordField('Password', validators=[DataRequired()])
     pass_confirm = PasswordField('Confirm Password', validators=[DataRequired(),EqualTo('password', message='Passwords must match')])
-    streetname = SelectField('Street Name',validate_choice=False, choices=[('lord lugard','lord lugard'), ('sule abuka','sule abuka'), ('mohammad sanusi','mohammad sanusi')], validators=[DataRequired()])
-    housenumber = SelectField('House Number', validate_choice=False, choices=[('1','1'),('2','2'),('3','3'),('4','4')], validators=[DataRequired()])
-    flatnumber = StringField('Flat Number', validators=[DataRequired()])
+    streetname = SelectField('Street Name', validate_choice=False, validators=[DataRequired()])
+    housenumber = SelectField('House Number', validate_choice=False, validators=[DataRequired(), Regexp(regex='^\d+$')])
+    flatnumber = StringField('Flat Number', render_kw={'required': False}, validators=[Regexp(regex='^\d*$')])
     gender = SelectField('Gender', validators=[DataRequired()], choices = [('male','Male'),('female','Female')])
     # validators for phone number in nigira
     telephone = StringField('Telephone', validators=[DataRequired()])
@@ -52,14 +52,6 @@ class UserForm(FlaskForm):
     # role = SelectField('Role', validators=[DataRequired()], choices=[('occupant','occupant'),('guard','guard')])
     submit = SubmitField("Register")
 
-    def validate_telephone(self, field):
-        # Check if not None for that user email!
-        if User.query.filter_by(telephone=field.data).first():
-            raise ValidationError('Your phone number has been registered already!')
-        if field.data and str(field.data)[0] != '0':
-            raise ValidationError('The phone number is invalid, it must start with 0')
-        if field.data and len(str(field.data)) != 11:
-            raise ValidationError('The phone number is invalid, it must be 11 digits long')
     def validate_username(self, field):
         # Check if not None for that username!
         if User.query.filter_by(username=field.data).first():
@@ -70,9 +62,9 @@ class UserForm(FlaskForm):
             submitted_number = str(field.data)
             valdaite_num = phonenumbers.parse(submitted_number)
             if not phonenumbers.is_valid_number(valdaite_num):
-                raise ValidationError("invalid number")
+                raise ValidationError("invalid phone number")
         except:
-            raise ValidationError("invalid number")
+            raise ValidationError("invalid phone number")
 
 
 
@@ -103,7 +95,7 @@ class GuestForm(FlaskForm):
     firstname = StringField('Firstname', validators=[DataRequired()])
     lastname = StringField('Lastname', validators=[DataRequired()])
     gender = SelectField('Gender', validators=[DataRequired()], choices = [('male','Male'),('female','Female')])
-    telephone = IntegerField('Telephone', validators=[DataRequired()])
+    telephone = StringField('Telephone', validators=[DataRequired()])
     submit = SubmitField("Book Guest")
 
 
@@ -140,7 +132,7 @@ class EnquiryForm(FlaskForm):
 
 
 class NewsForm(FlaskForm):
-    #id = HiddenField()
+    id = HiddenField()
     user_id = IntegerField('Reporter id')
     publication = TextAreaField('News', validators=[DataRequired()])
     news_date = DateTimeField('News Date', default=datetime.today, validators=[DataRequired()])

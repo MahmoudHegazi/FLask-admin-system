@@ -1,15 +1,19 @@
-from flask import render_template, request, flash, redirect, url_for, Blueprint, session, current_app
+from flask import render_template, request, flash, redirect, url_for, Blueprint, session, current_app, jsonify
 from flask_login import login_user, current_user, logout_user, login_required
 from estate_management.core.userforms import UserForm, GuestForm, StaffForm, ServiceForm, LoginForm, EnquiryForm, NewsForm, SubscriptionForm, UpdateUserForm, CodeForm, GeneratorForm
-from estate_management.usermodels import User, Guest, Staff, Service, Enquiry, Publication, Subscription, Code, StreetsMetadata
+from estate_management.usermodels import User, Guest, Staff, Service, Enquiry, Publication, Subscription, Code, StreetsMetadata, Handymen, HandyMenNotfications, ServiceMetaData
 from estate_management.core.picture_handler import add_profile_pic
-from estate_management.core.guardCodeGenerator import code_generator, strpool
+from estate_management.core.guardCodeGenerator import code_generator, strpool, unique_code_generator1, strpool
 from estate_management import giveMeAllHousesList, getValidExclude
+from estate_management.core.twilio_sms import valdiate_phone, did_you_send_notification
+from estate_management.core.easy_encrypt import decrypt, give_me_valid_object
+from wtforms.validators import AnyOf, ValidationError
 from estate_management import db, stripe_key, super_admin_permission, super_admin_permission, estate_admin_permission, guard_permission
 from flask_principal import Principal, Identity, AnonymousIdentity, \
      identity_changed
 import sys
-
+import datetime
+import time
 
 core = Blueprint('core',__name__, template_folder='templates')
 
@@ -81,8 +85,9 @@ def login():
     form = LoginForm()
 
     if form.validate_on_submit():
-        #session['username'] = request.form['username']
-        user = User.query.filter_by(username=form.username.data).first()
+        submited_username = "%s" %str(request.form['username']).strip().lower()
+        session['username'] = submited_username
+        user = User.query.filter_by(username=submited_username).first()
 
         if user == None:
             flash("User is not registered! Please register!")
@@ -141,11 +146,13 @@ def createUser():
     form = CodeForm()
     user_form = UserForm()
     # first Form
-    if form.validate_on_submit():
+    if form.validate_on_submit() and user_form.validate_on_submit() != True:
         valid_form = True
         # import inspect print(inspect.getmembers(form, lambda a:not(inspect.isroutine(a))))
         # SEARCH FOR REGISTRATION CODE GIVEN BY THE ADMIN
-        registrationCode = Code.query.filter_by(gen_code=form.registrationCode.data).first()
+        form_gen_code = str(form.registrationCode.data).upper()
+
+        registrationCode = Code.query.filter_by(gen_code=form_gen_code).first()
 
         # CHECK IF REGISTRATION CODE MATCHES THE GIVEN NAME ON THE DATABASE
         if not registrationCode:
@@ -170,16 +177,28 @@ def createUser():
             # user_form.streetname.choices =
 
             if 'streetname' in user_form and 'choices' in vars(user_form.streetname) and 'housenumber' in user_form and 'choices' in vars(user_form.housenumber):
-                current_streets = StreetsMetadata.query.filter_by(estate_id=registrationCode.user_estate).all()
-                street_houses = giveMeAllHousesList(current_streets[0].excluded, current_streets[0].min, current_streets[0].max)
-                user_form.streetname.choices = [street.streetname for street in current_streets]
-                user_form.housenumber.choices = street_houses
 
-            code_submit = {'code': form.registrationCode.data, 'name': form.fullName.data}
+                current_streets = StreetsMetadata.query.filter_by(estate_id=registrationCode.user_estate).all()
+                if len(current_streets) > 0:
+                    street_houses = giveMeAllHousesList(current_streets[0].excluded, current_streets[0].min, current_streets[0].max)
+                    user_form.streetname.choices = [street.streetname for street in current_streets]
+                    user_form.housenumber.choices = street_houses
+                    # I closed valdaiton until add my choices and turn on again to reduce any chance for errors
+                    user_form.streetname.validate_choice = True
+                else:
+                    flash("There are no street and house names in the app, and you won't be able to create a user. Please contact the administrator to add streets")
+                    if "streetname" in user_form and user_form.streetname.validate_choice is not None:
+                        # in case no strrets and housenumber inform the user and return the valdation on to not let him pass
+                        user_form.streetname.validate_choice = True
+                    if "housenumber" in user_form and user_form.housenumber.validate_choice is not None:
+                        user_form.housenumber.validate_choice = True
+
+                    user_form.streetname.validate_choice = True
+            code_submit = {'code': form_gen_code, 'name': form.fullName.data}
+
             return render_template('user.html', form=user_form, code_submit=code_submit)
     # Second Form
     elif user_form.validate_on_submit():
-        print(user_form.code.data)
         registrationCode = Code.query.filter_by(gen_code=user_form.code.data).first()
         if not registrationCode:
             flash("Your request cannot be processed. invalid registration Code Make sure not to edit form hidden data")
@@ -222,7 +241,6 @@ def createUser():
             street_houses = giveMeAllHousesList(current_streets[0].excluded, current_streets[0].min, current_streets[0].max)
             user_form.streetname.choices = [street.streetname for street in current_streets]
             user_form.housenumber.choices = street_houses
-
         return render_template('user.html', form=user_form, code_submit=code_submit)
     else:
         # display the code form
@@ -373,11 +391,29 @@ def createGuest():
     form = GuestForm(request.form)
     guests = Guest.query.all()
     if form.validate_on_submit():
-        guest = Guest(user_id=current_user.id, visit_date=form.visit_date.data, firstname=form.firstname.data, lastname=form.lastname.data, gender=form.gender.data, telephone=form.telephone.data)
-        db.session.add(guest)
-        db.session.commit()
-        flash("Added Guest Successfully")
-        return redirect(url_for("core.guestlist"))
+        is_valid_phone = valdiate_phone(form.telephone.data)
+        if is_valid_phone == False:
+            flash("Invalid phone number")
+            return render_template("guest.html", form=form, guests=guests)
+
+        gencode = unique_code_generator1(strpool, [guest.guest_code for guest in guests])
+        new_guest = Guest(user_id=current_user.id, visit_date=form.visit_date.data, firstname=form.firstname.data, lastname=form.lastname.data, gender=form.gender.data, telephone=form.telephone.data, guest_code=gencode)
+        db.session.add(new_guest)
+        if "firstname" in form:
+            try:
+                message = "hi {} your guest code is: {}".format(form.firstname.data, gencode)
+                message_sent = did_you_send_notification(str(form.telephone.data), message, ['code', 'guest'])
+                if message_sent['sent']:
+                    new_guest.notification_sent = True
+                    db.session.commit()
+                    flash(message_sent['message'])
+                    flash("Added Guest Successfully")
+                    return redirect(url_for("core.guestlist"))
+                else:
+                    # if message could not be sent not let him pass
+                    flash(message_sent['message'])
+            except Exception as e:
+                raise ValidationError("We were unable to send a notice to the guest Make sure it's a valid number, error: {}".format(str(e)))
     else:
         flash('Fill all fields')
     return render_template("guest.html", form=form, guests=guests)
@@ -386,9 +422,20 @@ def createGuest():
 @core.route("/updateGuest/<int:guest_id>", methods=["GET", "POST"])
 @login_required
 def updateGuest(guest_id):
+    telephone = None
     guest = Guest.query.get(guest_id)
+    if guest:
+        telephone = guest.telephone
     form = GuestForm(request.form, obj=guest)
     if form.validate_on_submit():
+        # valdaite phone if changed
+        if telephone:
+            if str(request.form['telephone']) != str(telephone):
+                is_valid_phone = valdiate_phone(request.form['telephone'])
+                if is_valid_phone == False:
+                    flash("Invalid phone number")
+                    return render_template("guest.html", form=form, guests=Guest.query.all())
+
         form.populate_obj(guest)
         db.session.commit()
         flash("Updated Guest Successfully")
@@ -635,45 +682,69 @@ def allenquirylist():
 @login_required
 def createNews():
     form = NewsForm()
+    if current_user.role in [1,2]:
 
-    if form.validate_on_submit():
-        publication = Publication(user_id=current_user.id, publication=form.publication.data, news_date=form.news_date.data)
-        db.session.add(publication)
-        db.session.commit()
-        flash("News published successfully!")
+        if form.validate_on_submit():
+            publication = Publication(user_id=current_user.id, publication=form.publication.data, news_date=form.news_date.data)
+            if current_user.role != 1:
+                publication.users = current_user
+            db.session.add(publication)
+            db.session.commit()
+            flash("News published successfully!")
+            return redirect(url_for("core.newslist"))
+        else:
+            return render_template('community_news.html', form=form)
+    else:
+        flash("Sorry You have no premssion to create news")
         return redirect(url_for("core.newslist"))
 
-    return render_template('community_news.html', form=form)
-
 #ADMIN'S PAGE TO UPDATE POSTED NEWS
-@core.route("/updateNews/<int:news_id>", methods=["GET", "POST"])
+@core.route("/updateNews/<int:publication_id>", methods=["GET", "POST"])
 @login_required
 def updateNews(publication_id):
     publication = Publication.query.get(publication_id)
-    form = NewsForm(request.form, obj=publication)
-    if form.validate_on_submit():
-        form.populate_obj(publication)
-        db.session.commit()
-        flash("Updated News Successfully")
+    if current_user.role == 1 or current_user.id == publication.user_id:
+        form = NewsForm(request.form, obj=publication)
+        if form.validate_on_submit():
+            try:
+                form.populate_obj(publication)
+                db.session.commit()
+                flash("Updated News Successfully")
+                return redirect(url_for("core.newslist"))
+            except:
+                flash("Updated News Failed")
+                return redirect(url_for("core.newslist"))
+        return render_template("community_news.html", form=form, publication=Publication.query.all())
+    else:
+        flash("You have no premssion to updateNews")
         return redirect(url_for("core.newslist"))
-    return render_template("community_news.html", form=form, publication=Publication.query.all())
-
 #ADMIN'S NEWS TO DELETE POSTED NEWS
-@core.route("/deleteNews/<int:news_id>", methods=["GET", "POST"])
+@core.route("/deleteNews/<int:publication_id>", methods=["GET", "POST"])
 @login_required
 def deleteNews(publication_id):
+    form = NewsForm(request.form)
     publication = Publication.query.get(publication_id)
-    db.session.delete(publication)
-    db.session.commit()
+    if current_user.role == 1 or current_user.id == publication.user_id:
+        try:
+            db.session.delete(publication)
+            db.session.commit()
+            flash("Deleted news successfully")
+        except Exception as e:
+            flash("could not delete new: {}".format(str(e)))
+    else:
+        flash("sorry you have no premssion to delete news {}".format(current_user.role==1))
     return redirect(url_for("core.newslist"))
 
 #OCCUPANTS PAGE TO VIEW NEWS.
 @core.route('/newslist')
 @login_required
 def newslist():
+
     user_id = request.args.get('id')
-    publications = Publication.query.filter_by(user_id=current_user.id).all()
-    return render_template('newslist.html',publications=publications)
+    getuser = User.query.filter_by(id=current_user.id).first()
+    publications = db.session.query(Publication.id,Publication.id, Publication.user_id, Publication.publication, Publication.news_date, User.estate).join(User, Publication.user_id == User.id).filter(User.estate==current_user.estate).all()
+    return render_template('newslist.html',news=publications)
+
 
 #ADMIN'S VIEW OF ALL POSTED NEWS
 @core.route('/allnewslist')
@@ -681,3 +752,270 @@ def newslist():
 def allnewslist():
     publications = Publication.query.all()
     return render_template('allnewslist.html', publications=publications)
+# service_progresss.html
+
+
+@core.route('/startcounter/<int:service_id>/<int:meta_id>', methods=['GET'])
+def start_counter(service_id, meta_id):
+    # wait 10 minutes and check can make smaller for more on time but in js update the serverUpdateIndex too
+    serverUpdateIndex = 60
+    for index in range(30):
+        time.sleep(serverUpdateIndex)
+        the_service = db.session.query(Service).filter_by(id=service_id).first()
+        the_meta = db.session.query(ServiceMetaData).filter_by(id=meta_id).first()
+        handyman = db.session.query(HandyMan).filter_by(the_meta=handyman_id).first()
+        if not the_service or not the_meta or not handyman:
+            return jsonify({'code': 404})
+
+        print("wait index {}".format(index+1))
+        if the_service.arrived == True:
+            if the_service.handyman.id == the_meta.handyman_id:
+                the_meta.completed = True
+            else:
+                the_meta.canceled = True
+                if the_service.handyman.rating > 0:
+                    the_service.handyman.rating -= 1
+                    the_service.handyman.update()
+            the_meta.in_progress = False
+            the_meta.update()
+    return jsonify({'code':200})
+
+@core.route('/counter_update/<int:service_id>/<int:meta_id>', methods=['GET'])
+def counter_updater(service_id, meta_id):
+    the_service = db.session.query(Service).filter_by(id=service_id).first()
+    the_meta = db.session.query(ServiceMetaData).filter_by(id=meta_id).first()
+    if not the_service or not the_meta:
+        return jsonify({'code':404, 'status': 'not_found', 'data': None})
+    if the_meta.in_progress == True and the_meta.service.arrived == False:
+        if the_meta.expire_date > datetime.datetime.utcnow():
+            time_remaining = str(the_meta.expire_date - datetime.datetime.utcnow())
+            time_remaining = time_remaining.split(".")
+            if len(time_remaining) > 0:
+                time_remaining = time_remaining[0].split(":")
+                if len(time_remaining) > 1:
+                    time_remaining = "{}.{}".format(time_remaining[1], time_remaining[2])
+                    try:
+                        time_remaining = float(time_remaining)
+                        if int(time_remaining) > 0:
+                            return jsonify({'code':200, 'status': 'in_progress', 'data': time_remaining})
+                        else:
+                            return jsonify({'code':200, 'status': 'time_over', 'data': time_remaining})
+                    except:
+                        pass
+    else:
+        the_service = db.session.query(Service).filter_by(id=service_id).first()
+        the_meta = db.session.query(ServiceMetaData).filter_by(id=meta_id).first()
+        if the_service.arrived == True:
+            the_meta.in_progress = False
+            the_meta.update()
+
+            if the_service.handyman.id == the_meta.handyman_id:
+                the_meta.completed = True
+                the_meta.update()
+                return jsonify({
+                'data': None,
+                'code': 200,
+                'status': 'completed',
+                'message': 'Service completed Thank you for keeping a good experience with our customers..',
+                'data': None
+                })
+            else:
+                the_meta.canceled = True
+                the_meta.update()
+                return jsonify({
+                'data': None,
+                'code': 200,
+                'status': 'canceled',
+                'message': 'You have canceled the service and lost 1 star rating avoid do that..',
+                'data': None
+                })
+        else:
+            the_meta.canceled = True
+            the_meta.update()
+            return jsonify({
+            'data': None,
+            'code': 200,
+            'status': 'canceled',
+            'message': 'You have canceled the service and lost 1 star rating avoid do that..',
+            'data': None
+            })
+
+    return jsonify({'code':422, 'status': 'unkown', 'data': None})
+
+
+@core.route('/service_counter', methods=['POST', 'GET'])
+def wait_then_excute():
+    request_data = request.json
+    if not request_data:
+        return jsonify({'code': 400, 'status': 'invalid', 'message': 'Invalid service Link..', 'data': None})
+
+    if 'handyman' not in request_data or 'service_meta' not in request_data or 'service_id' not in request_data or 'service_code' not in request_data:
+        return jsonify({
+        'code': 422,
+        'status': 'invalid',
+        'message':
+        'Required values are missing If this problem recurs, contact support again...',
+        'data': None
+        })
+
+
+    service_meta = ServiceMetaData.query.filter_by(id=request_data['service_meta'], service_id=request_data['service_id'], handyman_id=request_data['handyman']).one_or_none()
+    if not service_meta:
+        return jsonify({
+        'code': 404,
+        'status': 'invalid',
+        'message': 'Service is Not Found, Make sure not to edit the url',
+        'data': None
+        })
+
+    elif service_meta.service.code != request_data['service_code']:
+        return jsonify({
+        'code': 403,
+        'status': 'premssion_error',
+        'message': 'You have no premssion to access this service status page',
+        'data': None
+        })
+
+    elif service_meta.completed == True:
+        return jsonify({
+        'data': service_meta.completed,
+        'code': 200,
+        'status': 'completed',
+        'message': 'Service completed Thank you for keeping a good experience with our customers..',
+        'data': None
+        })
+
+    elif service_meta.canceled == True:
+        return jsonify({
+        'data': service_meta.canceled,
+        'code': 200,
+        'status': 'canceled',
+        'message': 'You have canceled the service and lost 1 star rating avoid do that..',
+        'data': None
+        })
+
+    elif service_meta.in_progress == True and service_meta.service.arrived == False:
+        time_remaining = 0.00
+        if service_meta.expire_date > datetime.datetime.utcnow():
+            time_remaining = str(service_meta.expire_date - datetime.datetime.utcnow())
+            time_remaining = time_remaining.split(".")
+            if len(time_remaining) > 0:
+                time_remaining = time_remaining[0].split(":")
+                if len(time_remaining) > 1:
+                    time_remaining = "{}.{}".format(time_remaining[1], time_remaining[2])
+                    try:
+                        time_remaining = float(time_remaining)
+                        return jsonify({
+                        'code': 200,
+                        'status': 'in_progress',
+                        'message': 'The service is in progress, please visit the customer quickly',
+                        'data': time_remaining
+                        })
+                    except:
+                        pass
+
+    else:
+        return jsonify({'code':404, 'status': 'no found', 'data1':service_meta.in_progress, 'message': 'task not found or expired'})
+
+
+
+
+# apply for a service from link
+@core.route('/apply')
+def serviceapply():
+    is_redirected = False
+
+    if request.args.get("redirected"):
+        is_redirected = True
+
+    reuqest_service_id = request.args.get("sid")
+    get_service = Service.query.get(reuqest_service_id)
+    if not get_service:
+        flash("Service Expired Or not found")
+        return render_template("service_progresss.html")
+
+
+
+    #return "{} {}".format(request.args.get("data"), get_service.salt)
+
+    request_encrypted_data = request.args.get("data")
+    request_decrypted_data = decrypt(request_encrypted_data, get_service.salt)
+    request_data_object = give_me_valid_object(request_decrypted_data, ",")
+    if "hcode" not in request_data_object or "hid" not in request_data_object or "nid" not in request_data_object or "scode" not in request_data_object:
+        return "You provided invalid link"
+
+
+    # first check notification code exist and not hacking link
+    handy_notification = HandyMenNotfications.query.filter_by(code=request_data_object["hcode"]).one_or_none()
+    valid_request = False
+    # valdaite request data from database
+    if not handy_notification:
+        return "You provided invalid link 1"
+    elif str(handy_notification.handyman_id) != request_data_object['hid']:
+        return "You provided invalid link 2"
+    elif str(handy_notification.id) != request_data_object['nid']:
+        return "You provided invalid link 3"
+    elif get_service.code != request_data_object['scode']:
+        return "You provided invalid link 4"
+    else:
+        valid_request = True
+
+    # if approved already
+
+    is_second_apply = ServiceMetaData.query.filter_by(service_id=handy_notification.service_id, handyman_id=handy_notification.handyman_id).first()
+
+    # now we have secure request and identitify the handyman securely
+    db_service = handy_notification.service
+    db_handyman = handy_notification.handyman
+    new_service_meta = ServiceMetaData.query.filter_by(service_id=db_service.id, handyman_id=db_handyman.id).first()
+
+    # repeat visit the link
+    if is_second_apply and is_redirected == False:
+        if is_second_apply.canceled == True:
+            flash("You have canceled this service and we dudct 1 star from your rating")
+            return render_template("service_progresss.html")
+
+        if is_second_apply.canceled == False and is_second_apply.completed == False:
+            flash("You have already accepted this task, quickly go to the customer.")
+            final_data = {'handyman': db_handyman.id, 'service_meta': new_service_meta.id, 'service_id': db_service.id, 'service_code': db_service.code}
+            return render_template("service_progresss.html", data=final_data, redirected=True)
+
+        if is_second_apply.completed == True:
+            flash("{} Thank you for visit the client fast you completed this task wait for others".format(new_service_meta.id))
+            return render_template("service_progresss.html")
+
+    # redirected
+    if new_service_meta and new_service_meta.canceled == True and is_redirected == True:
+        flash("You have canceled this service and we dudct 1 star from your rating")
+        return render_template("service_progresss.html")
+
+    if new_service_meta and new_service_meta.completed == True  and is_redirected == True:
+        flash("{} Thank you for visit the client fast you completed this task wait for others".format(new_service_meta.id))
+
+        return render_template("service_progresss.html")
+
+
+    if new_service_meta and is_redirected == True:
+        final_data = {'handyman': db_handyman.id, 'service_meta': new_service_meta.id, 'service_id': db_service.id, 'service_code': db_service.code}
+        return render_template("service_progresss.html", data=final_data, redirected=True)
+
+    new_service_meta = None
+    try:
+        approved_time = datetime.datetime.utcnow()
+        expired_time_at = approved_time + datetime.timedelta(minutes=30)
+        db_service.last_approve_date = approved_time
+        db_service.approved = True
+        db_service.asigned_to = handy_notification.handyman.id
+        db_service.update()
+        db_service = handy_notification.service
+        new_service_meta = ServiceMetaData(service_id=db_service.id, handyman_id=db_handyman.id, expire_date=expired_time_at)
+        new_service_meta.insert()
+        new_service_meta.in_progress = True
+        new_service_meta.update()
+    except Exception as e:
+        return "Unkown error Happend While approve your Request: {}".format(str(e))
+
+    # the corn job or samilr here timedelta(minutes=n)
+    final_data = {'handyman': db_handyman.id, 'service_meta': new_service_meta.id, 'service_id': db_service.id, 'service_code': db_service.code}
+    flash("Congratulations on accepting this service, hurry up to the customer by {} or else you will lose 1 star from your rating".format(new_service_meta.expire_date))
+    return render_template("service_progresss.html", data=final_data, redirected=True, start=True)

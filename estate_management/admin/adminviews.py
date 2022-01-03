@@ -1,8 +1,12 @@
 from flask import render_template,make_response,current_app,jsonify, request, flash, redirect, url_for, Blueprint, session
 from flask_login import login_user, current_user, logout_user, login_required
 from estate_management.core.userforms import UserForm, GuestForm, StaffForm, ServiceForm, LoginForm, EnquiryForm, NewsForm, SubscriptionForm, UpdateUserForm, CodeForm, GeneratorForm
-from estate_management.usermodels import User,Role, Estate, Guest, Staff, Service, Enquiry, Publication, Subscription, Code, StreetsMetadata
+from estate_management.usermodels import User,Role, Estate, Guest, Staff, Service, ServiceMetaData, Enquiry, Publication, Subscription, Code, StreetsMetadata, ServiceType, Handymen, HandyMenNotfications
 from estate_management.core.picture_handler import add_profile_pic
+
+from estate_management.admin.twilio_admin_sms import did_you_send_notification, valdiate_phone
+from estate_management.admin.easy_encrypt import encrypt, decrypt
+
 from estate_management import db, stripe_key
 from estate_management import babel as b
 #from flask_babel import gettext, ngettext
@@ -14,7 +18,7 @@ from flask_admin.contrib import sqla
 from flask_admin import BaseView, expose
 from flask_admin.menu import MenuLink
 from flask_admin import *
-from estate_management import app, static_path, db, SQLAlchemy, babel
+from estate_management import app, static_path, db, SQLAlchemy, babel, twilio_sid, twilio_token, twilio_number, Client
 from datetime import date
 from flask_admin.model import typefmt
 from flask_admin.model.template import macro
@@ -35,14 +39,23 @@ import os.path as op
 from flask_babelex import Babel
 from werkzeug.security import generate_password_hash, check_password_hash
 from estate_management import super_admin_permission, estate_admin_permission, admin_permission, guard_permission
-from flask_admin.form import Select2Widget
+from flask_admin.form import Select2Widget, FileUploadField
 from wtforms.utils import unset_value
+from wtforms import validators
 from flask_admin.form.fields import Select2TagsField
 from sqlalchemy import func
 from flask_admin.model.template import TemplateLinkRowAction
 from sqlalchemy import and_, or_, not_
 import phonenumbers
+import os
+import sys
+import random
+import imghdr
+from sqlalchemy.event import listens_for
+from jinja2 import Markup
+from PIL import Image
 
+from flask_admin import form
 """Helper functions"""
 # expose the main home view for admin page to control the page and add data protect it with admin premssion
 # why this miror due to diffrent admin app has more admins and diffrent render instead of reapat all this it function
@@ -73,7 +86,9 @@ def render_miror(self, template, **kwargs):
     response.headers['x-cache-hits'] = '1, 1'
     return response
 
-
+def create_dynamic_url(url_data):
+    the_base_url = str(request.base_url.split("/")[0] + "//" + request.host + "/")
+    return the_base_url + str(url_data)
 
 def getValidExclude(excluded, the_min, the_max):
     int_exclude_list = []
@@ -146,21 +161,17 @@ class MyHomeView(AdminIndexView):
 adminapp = Blueprint('adminapp',__name__, template_folder='templates.admin')
 admin = Admin(app, name='Admin', template_mode='bootstrap4', index_view=MyHomeView())
 
-
-
 def formatter(view, context, model, name):
     # `view` is current administrative view
     # `context` is instance of jinja2.runtime.Context
     # `model` is model instance
     # `name` is property name
-    """
     return Markup(
         u"<a href='%s'>%s</a>" % (
             url_for('user.edit_view', id=model.users.id),
             model.user
         )
         ) if model.user else u""
-    """
     pass
 
 def type_formatter(view, value):
@@ -225,7 +236,7 @@ class SuperAdminModelView(sqla.ModelView):
     def render(self, template, **kwargs):
         if 'name' in vars(self):
             if str(self.name).lower() in ['guest', 'staff']:
-                self.extra_js = [url_for("static", filename="admin/js/users.js"), url_for("static", filename="admin/js/phonenumbers.js"), "https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/js/intlTelInput.min.js"]
+                self.extra_js = [url_for("static", filename="admin/js/phonenumbers.js"), "https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/js/intlTelInput.min.js"]
                 self.extra_css = ['https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/css/intlTelInput.css']
         response = render_miror(self, template, **kwargs)
         return response
@@ -233,15 +244,16 @@ class SuperAdminModelView(sqla.ModelView):
     def on_model_change(self, form, User, is_created):
         # valdaite phone using phonenumbers library
         if 'name' in vars(self):
-            if str(self.name).lower() in ['guest', 'staff']:
+            # multible way to handle more than one class onchange
+            if str(self.name).lower() in ['staff']:
                 if "telephone" in form and form.telephone.data is not None:
                     try:
                         submitted_number = str(form.telephone.data)
                         valdaite_num = phonenumbers.parse(submitted_number)
                         if not phonenumbers.is_valid_number(valdaite_num):
-                            raise ValidationError("invalid number")
+                            raise ValidationError("invalid phone number")
                     except:
-                        raise ValidationError("invalid number")
+                        raise ValidationError("invalid phone number")
 
     column_type_formatters = MY_DEFAULT_FORMATTERS
     can_view_details = True
@@ -272,6 +284,16 @@ def add_my_headers(response):
         return response
     return response
 # Admin Users View (Control Users AdminView)
+
+
+def save_image_please(image_data, file_path):
+    img = Image.open(image_data)
+    img = img.convert('L')
+    img.save(file_path)
+    return True
+
+
+file_path = op.join(op.dirname(__file__), 'static/images/')
 class AdminUsersView(ModelView):
     search_placeholder = lambda a:'search by st, username, Tel, name'
     # update main view to render js file for any js tasks like toggle password
@@ -281,7 +303,6 @@ class AdminUsersView(ModelView):
             return False
         else:
             return current_user.user_role.name == 'superadmin'
-    #    return current_user.user_role.name == 'superadmin' hn5tr3 el zra b2a 3shan choices
 
     @super_admin_permission.require(http_exception=403)
     def render(self, template, **kwargs):
@@ -289,9 +310,9 @@ class AdminUsersView(ModelView):
         using extra js in render method allow use
         url_for that itself requires an app context
         """
-        print(User.query.all()[0].telephone)
+        # print(User.query.all()[0].telephone)
         # print(db.session.query(Publication).filter(Publication.users.in_(User.query.filter_by(id=1).all)).all())
-        #print(db.session.query(Publication, User).filter(Publication.users.id==1).all())
+        # print(db.session.query(Publication, User).filter(Publication.users.id==1).all())
         # solved By Python King
         if 'form' in kwargs and 'streetname' in kwargs['form'] and 'choices' in vars(kwargs['form'].streetname):
             kwargs['form'].streetname.choices = [street.streetname for street in db.session.query(StreetsMetadata).all()]
@@ -334,24 +355,74 @@ class AdminUsersView(ModelView):
     column_default_sort = [('firstname', True), ('lastname', True)]
     column_sortable_list = ('firstname','lastname','registration_date','user_estate','flatnumber','housenumber','user_role','gender','username', 'dateofbirth')
 
+
+
     # create and edit model valdation
+
     def on_model_change(self, form, User, is_created):
+        # role number one JS diffrent than python nested condition check
+        if is_created:
+            # if is_created check for the second check
+            if form.password.data is None or form.password.data == '':
+                raise ValidationError("Password Can not Be Empty")
+
+        if is_created == False and form.profile_image.data != User.profile_image:
+            file_name = form.profile_image.data.filename
+            try:
+                file_extension = file_name.split(".")[len(file_name.split("."))-1]
+                file_name = User.firstname.strip().lower() + "_" + str(User.id) + "." + file_extension.lower()
+            except:
+                # incase unexpected error happend try to save the image as the original path
+                try:
+                    file_name = form.profile_image.data.filename
+                except:
+                    raise ValidationError("Image Could not be saved Please try another one")
+                finally:
+                    file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                    save_image_please(form.profile_image.data, file_path)
+            finally:
+                file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                save_image_please(form.profile_image.data, file_path)
+            User.profile_image = file_name
+            User.update()
+
         # valdaite phone using phonenumbers library
         if "telephone" in form and form.telephone.data is not None:
             try:
                 submitted_number = str(form.telephone.data)
                 valdaite_num = phonenumbers.parse(submitted_number)
                 if not phonenumbers.is_valid_number(valdaite_num):
-                    raise ValidationError("invalid number")
+                    raise ValidationError("invalid phone number")
             except:
-                raise ValidationError("invalid number")
-
-        if 'password_hash' in form and form.password_hash.data is not None:
-            User.password_hash = generate_password_hash(form.password_hash.data)
+                raise ValidationError("invalid phone number")
 
         if 'username' in form and form.username.data is not None:
             if form.username.data[0].isdigit():  # Check whether the first digit is a number
                 raise ValidationError('Username Cannot start with a number: ({})'.format(form.username.data))
+        if 'password' in form and form.password.data is not None:
+            User.password_hash = generate_password_hash(form.password.data)
+        if is_created:
+            if form.profile_image.data:
+                # this will display the id before commit
+                file_name = form.profile_image.data.filename
+                try:
+                    file_extension = file_name.split(".")[len(file_name.split("."))-1]
+                    file_name = User.firstname.strip().lower() + "_" + str(User.id) + "." + file_extension.lower()
+                except:
+                    # incase unexpected error happend try to save the image as the original path
+                    try:
+                        file_name = form.profile_image.data.filename
+                    except:
+                        raise ValidationError("Image Could not be saved Please try another one")
+                    finally:
+                        file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                        save_image_please(form.profile_image.data, file_path)
+                finally:
+                    file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                    save_image_please(form.profile_image.data, file_path)
+
+                User.profile_image = file_name
+                User.update()
         """
         if 'telephone' in form and form.telephone.data is not None:
             print(str(form.telephone.data))
@@ -372,7 +443,12 @@ class AdminUsersView(ModelView):
             render_kw={'onchange': "myFunction()"},
             validate_choice=True
             ),
-        }
+        'password': PasswordField(
+            'password'
+            ),
+        'profile_image': FileUploadField('profile_image',
+                                      base_path=file_path)
+    }
     # inline editable fildes
     column_editable_list = ['firstname','gender','lastname', 'streetname', 'flatnumber', 'user_role', 'user_estate']
 
@@ -381,7 +457,7 @@ class AdminUsersView(ModelView):
         'housenumber': IntegerField,
         'dateofbirth': DateField,
         'role': SelectMultipleField,
-        'telephone': StringField
+        'telephone': StringField,
     }
 
     # selectbox from strings good for role
@@ -394,10 +470,6 @@ class AdminUsersView(ModelView):
 
     # wtf forms (required work here)
     form_args = {
-            'profile_image': {
-            'label': 'Profile Image',
-            'validators': [required()]
-            },
             'firstname': {
             'label': 'First Name',
             'validators': [required()]
@@ -420,11 +492,6 @@ class AdminUsersView(ModelView):
             'validators': [required()]
             },
             # id used in user.js to add custom toggle
-            'password_hash': {
-            'label': 'Password',
-            'id': 'user_password',
-            'validators': [required()]
-            },
             'streetname': {
             'label': 'Street name',
             'validators': [required()]
@@ -461,14 +528,29 @@ class AdminUsersView(ModelView):
         'style': 'color: black'
     }
     }
+    # Pass additional parameters to 'path' to FileUploadField constructor
+    def _list_thumbnail(view, context, model, name):
+        if not model.profile_image:
+            return ''
+        return Markup('<img height="%s" width="%s" src="%s">' % (150, 150, url_for('static', filename='images/'+model.profile_image)))
+
+    #form_columns = (
     # remove these fileds from edit and create
-    form_excluded_columns = ['guests', 'staffs', 'services', 'enquiries', 'news', 'subscriptions']
+
+
+    column_formatters = {
+        'profile_image': _list_thumbnail
+    }
+    form_excluded_columns = ['guests', 'password_hash', 'staffs', 'services', 'enquiries', 'news', 'subscriptions']
     # open bootstrap modal for create and edit
     # sort columns
     # which columns has filter for example contains gaurd
     column_filters = [User.role, User.estate, User.gender]
     # which columns can used for search
     column_searchable_list = [User.firstname, User.username, User.telephone, User.streetname]
+    form_create_rules = (rules.HTML('<h5 class="text-center p-2 mb-3 mt-2 bg-primary text-white">Personal information</h5>'), 'firstname', 'lastname','dateofbirth','gender', 'user_estate', 'streetname', 'housenumber', 'flatnumber', 'telephone', rules.HTML('<h5 class="text-center p-2 mb-3 mt-2 bg-secondary text-white">App information</h5>'),'username', 'password', 'user_role', 'registration_date', 'profile_image')
+    column_list = ('firstname', 'profile_image', 'lastname','dateofbirth','gender', 'user_estate', 'streetname', 'housenumber', 'flatnumber', 'telephone', 'username', 'password', 'user_role', 'registration_date', 'profile_image')
+
 
     # Model Controllers
     can_create = True
@@ -478,10 +560,23 @@ class AdminUsersView(ModelView):
     #column_formatters = dict(User.housenumber=macro('render_price'))
     #column_formatters = dict(User.password_hash=lambda v, c, m, p: generate_password_hash(m.password_hash))
     # which columns can be added in create list
-    column_create_list = (User.firstname, User.lastname, User.dateofbirth, User.username, User.password_hash, User.streetname, User.housenumber, User.flatnumber, User.gender, User.telephone, User.role, User.estate)
 
 
+@listens_for(AdminUsersView, 'after_delete')
+def del_image(mapper, connection, target):
+    if target.path:
+        # Delete image
+        try:
+            os.remove(op.join(file_path, target.path))
+        except OSError:
+            pass
 
+        # Delete thumbnail
+        try:
+            os.remove(op.join(file_path,
+                              form.thumbgen_filename(target.path)))
+        except OSError:
+            pass
 
 
 
@@ -558,8 +653,42 @@ class AdminGuestsView(SuperAdminModelView):
     column_sortable_list = ('firstname','lastname', 'visit_date', 'gender', 'telephone')
 
     column_create_list = ('visit_date', 'firstname', 'lastname', 'gender', 'telephone')
-    form_excluded_columns = ['users']
-    column_list = ('host', 'visit_date', 'firstname', 'lastname', 'gender', 'telephone')
+    form_excluded_columns = ['users', 'notification_sent']
+    column_list = ('host', 'visit_date', 'firstname', 'lastname', 'gender', 'telephone', 'guest_code', 'approved', 'notification_sent')
+
+    def on_model_change(self, form, Guest, is_created):
+        # valdaite phone using phonenumbers library
+        if "telephone" in form and form.telephone.data is not None:
+            try:
+                submitted_number = str(form.telephone.data)
+                valdaite_num = phonenumbers.parse(submitted_number)
+                if phonenumbers.is_valid_number(valdaite_num):
+                    # if this only create new guest send the notification
+                    try:
+                        if is_created:
+                            if "firstname" in form and form.firstname.data is not None:
+                                if "guest_code" in form and form.guest_code.data is not None:
+                                    try:
+                                        message = "hi {} your guest code is: {}".format(form.firstname.data, form.guest_code.data)
+                                        message_sent = did_you_send_notification(str(form.telephone.data), message, ['code', 'guest'])
+                                        if message_sent['sent']:
+                                            Guest.notification_sent = True
+                                            flash(message_sent['message'])
+                                        else:
+                                            # if message could not be sent not let him pass
+                                            raise ValidationError(message_sent['message'])
+                                    except Exception as e:
+                                        raise ValidationError("We were unable to send a notice to the guest Make sure it's a valid number, error: {}".format(str(e)))
+
+                    except Exception as e:
+                        raise ValidationError("We were unable to send a notice to the guest, System error: {}".format(str(e)))
+
+                else:
+                    raise ValidationError("invalid phone number {}".format(submitted_number))
+            except Exception as e:
+                raise ValidationError("Cannot create guest because {}".format(str(e)))
+
+
     """
     form_ajax_refs = {
     'users': {
@@ -589,6 +718,10 @@ class AdminGuestsView(SuperAdminModelView):
             'label': 'Telephone',
             'validators': [required()]
             },
+            'guest_code': {
+            'label': 'Guest Code',
+            'validators': [required()]
+            }
     }
     form_choices = {
     'gender': [
@@ -596,6 +729,25 @@ class AdminGuestsView(SuperAdminModelView):
         ('female', 'Female'),
     ]
     }
+    form_widget_args = {
+        'guest_code': {
+            'readonly': True
+        },
+    }
+    #unique_code_generator(strpool, [co.guest_code for co in Guest.query.all()])
+    def create_form(self):
+        # (!VIP!) what happend here is intersting, this function called twice when render data
+        # and when submit the form and we can add custom valdation if we need by check the gen data if None
+        # so it create if not None and has value so it submit
+        form = super(AdminGuestsView, self).create_form()
+        gencode = unique_code_generator(strpool, [co.guest_code for co in Guest.query.all()])
+        if 'guest_code' in form:
+            form.guest_code.render_kw: {'readonly': True}
+            # not used alot but ok
+            if form.guest_code.data is None:
+                form.guest_code.data = gencode
+        # make the readonly here to able flask to update form and add value then close it
+        return form
 
 
 #on_form_prefill(form,id) @super_admin_permission.require(http_exception=403)
@@ -603,6 +755,7 @@ class AdminGuestsView(SuperAdminModelView):
 class AdminCodeGen(SuperAdminModelView):
     # take care is_created true if it create form so we need to check it to add valdation to create not edit
     def on_model_change(self, form, model, is_created):
+        # print(form.type.data)
         if not current_user.is_anonymous and is_created:
             model.user_id = current_user.id
         else:
@@ -636,7 +789,7 @@ class AdminCodeGen(SuperAdminModelView):
     column_editable_list = ['requested_for', 'gen_code', 'user_estate', 'user_role']
     column_create_list = ('requested_for', 'gen_code', 'gen_date', 'user_id', 'user_role')
     form_excluded_columns = ['id', 'unused', 'user']
-    column_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_role', 'code_estate', 'user_id', 'unused')
+    column_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_role', 'code_estate', 'user_id', 'unused', 'type')
 
     """
     def filter_func():
@@ -656,6 +809,7 @@ class AdminCodeGen(SuperAdminModelView):
         suggest_codes_list.append((code_generator(strpool), code_generator(strpool)))
     form_choices = {"gen_code": suggest_codes_list}
     """
+    form_choices = {"type": [(1, 'User'), (2, 'Guest')]}
     form_overrides = {
       'gen_code': StringField,
     }
@@ -691,6 +845,72 @@ class AdminCodeGen(SuperAdminModelView):
 
 
 class AdminServiceView(SuperAdminModelView):
+
+    def on_model_change(self, form, Service, is_created):
+        # create_dynamic_url("test?q=1") service_requested
+
+        if is_created:
+            # data = "task_id=1,guest_id=3,code=dbns1B"
+
+            db.session.flush()
+            gencode = unique_code_generator(strpool, [serv.code for serv in Service.query.all()])
+            service_salt = random.randint(10000000, 99999999)
+            current_service_id = Service.id
+            #current_service_type = form.service.data
+            Service.code = gencode
+            Service.salt = service_salt
+            Service_type = Service.service_type
+            all_handymen = Handymen.query.filter_by(service_type=Service.service_type, estate_id=form.estate.data.id).all()
+            message_sent_count = 0
+            message_unsent_count = 0
+            handymen_error = ""
+            # here we have all data send message to handyman
+            for handyman in all_handymen:
+                if handyman.rate < 4:
+                    continue
+                try:
+                    notification_handy_code = unique_code_generator(strpool, [noti.code for noti in HandyMenNotfications.query.all()])
+                    new_notification = HandyMenNotfications(code=notification_handy_code, message='', service_id=Service.id, handyman_id=handyman.id)
+                    db.session.add(new_notification)
+                    db.session.flush()
+                    notification_id = new_notification.id
+                    notification_code = new_notification.code
+                    data = "apply?sid={}&data=".format(Service.id)
+                    data += encrypt("hid={},nid={},hcode={},scode={}".format(handyman.id,notification_id, notification_code,Service.code), service_salt)
+                    message = "new service, {} apply: ".format(Service.service_requested) + create_dynamic_url(data)
+                    message_sent = did_you_send_notification(handyman.telephone, message, ['notification', 'handyman'])
+                    new_notification.message = message
+                    flash(message)
+                    # update cus it commit only we added also insert work but we use what we need only to avoid unexpected errors
+                    new_notification.update()
+                    if message_sent['sent']:
+                        #Service.notification_sent = True
+                        flash(message_sent['message'])
+                        message_sent_count += 1
+                    else:
+                        # if message could not be sent not let him pass
+                        message_unsent_count += 1
+                        handymenError = message_sent['message']
+                        continue
+                except Exception as e:
+                    raise ValidationError("We were unable to send a notice to the handyman due to technical error, error: {}".format(str(e)))
+
+
+
+            if len(all_handymen) > 0 and message_sent_count == 0 and len(all_handymen) != 1:
+                if message_unsent_count > 0:
+                    raise ValidationError(handymen_error + ", notification failure to {} handymen".format(message_unsent_count))
+                else:
+                    raise ValidationError("unexpected error contact support")
+
+            if len(all_handymen) > 0 and message_sent_count == 0 and len(all_handymen) == 1:
+                flash("We have no handyman With 5 stars to get the service please try again later")
+            else:
+                flash("We have sent a notification to {} of our most skilled workers".format(message_sent_count))
+            Service.update()
+
+
+            #raise ValidationError(str(form.serivce.get_pk(form.serivce))) form.service.raw_data
     #IntegerField
     form_base_class = SecureForm
     column_type_formatters = MY_DEFAULT_FORMATTERS
@@ -700,12 +920,12 @@ class AdminServiceView(SuperAdminModelView):
     column_filters = ['request_date', 'user_id', 'service_requested']
     column_searchable_list = ['id', 'user_id', 'request_date', 'service_requested']
     column_editable_list = ['service_requested', 'user_id', 'request_date']
-
+    form_excluded_columns = ['code','handyman', 'salt','approved','last_approve_date']
     column_default_sort = [('request_date', True)]
     column_sortable_list = ('service_requested','user_id', 'request_date', 'request_date', 'id')
 
 
-    column_create_list = ('service_requested', 'request_date')
+    column_create_list = ('service_requested', 'request_date', 'requester')
     column_list = ('id','requester', 'service_requested', 'request_date')
     form_args = {
             'service_requested': {
@@ -719,8 +939,26 @@ class AdminServiceView(SuperAdminModelView):
             }
     }
 
-
-
+    form_extra_fields = {
+        'requester': sqla.fields.QuerySelectField(
+            label='Service Requester:',
+            query_factory=lambda:User.query.all(),
+            widget=Select2Widget(),
+            default=lambda:User.query.first()
+        ),
+        'serivce': sqla.fields.QuerySelectField(
+            label='Serivce:',
+            query_factory=lambda:ServiceType.query.all(),
+            widget=Select2Widget(),
+            default=lambda:ServiceType.query.first()
+        ),
+        'estate': sqla.fields.QuerySelectField(
+            label='estate',
+            query_factory= lambda:Estate.query.all(),
+            widget=Select2Widget(),
+            default=lambda:Estate.query.first()
+        ),
+    }
 class AdminRoleView(SuperAdminModelView):
     can_delete = False
 
@@ -757,6 +995,18 @@ class AdminStaffView(SuperAdminModelView):
     ]
     }
 
+class AdminServcesTypesView(SuperAdminModelView):
+    column_list = ['id', 'service']
+    column_sortable_list = ['id', 'service']
+    form_excluded_columns = ['handymen', 'services']
+
+class AdminServiceMetaDataView(SuperAdminModelView):
+    can_create = False
+    can_edit = True
+    can_delete = False
+    column_filters = ['completed', 'canceled', 'in_progress']
+    column_sortable_list = ['id', 'service_id', 'handyman.id', 'service.id']
+    column_list = ['id', 'canceled', 'completed', 'in_progress', 'service_id', 'handyman.id', 'service.id']
 admin.add_view(AdminUsersView(User, db.session))
 admin.add_view(AdminGuestsView(Guest, db.session))
 admin.add_view(AdminCodeGen(Code, db.session))
@@ -768,7 +1018,9 @@ admin.add_view(FileAdminView(static_path, name='Files', category='System'))
 admin.add_view(SuperAdminModelView(Role, db.session, category='System'))
 admin.add_view(AdminEstateView(Estate, db.session, category='System'))
 admin.add_view(AdminStreetMetadataView(StreetsMetadata, db.session, name='Streets', category='System'))
+admin.add_view(AdminServcesTypesView(ServiceType, db.session, category='System'))
 
+admin.add_view(AdminServiceMetaDataView(ServiceMetaData, db.session, category='System'))
 
 
 
@@ -915,9 +1167,22 @@ class EstateAdminView(AdminEstateModelView):
     def on_model_change(self, form, User, is_created):
         allowed_rules = ['guard', 'occupant', 'guest', 'temp']
 
-        if "password_hash" in form and form.password_hash.data is not None:
-            # so the User is the new recored created we can override Submitted value for ex hash pass or may prevent superadmin role but need current_user.role
-            User.password_hash = generate_password_hash(form.password_hash.data)
+        if is_created:
+            print("....................")
+            img = Image.open(form.profile_image.data)
+            img = img.convert('L')
+            file_path = op.join(op.dirname(__file__), 'static/images/{}'.format(form.profile_image.data.filename))
+            # file_path = op.join(url_for('static', filename=form.profile_image.data.filename))
+            img.save(file_path)
+            print(file_path)
+            print(img.size)
+            print("....................")
+            # if is_created check for the second check
+            if form.password.data is None or form.password.data == '':
+                raise ValidationError("Password Can not Be Empty")
+
+        if 'password' in form and form.password.data is not None:
+            User.password_hash = generate_password_hash(form.password.data)
 
         if 'username' in form and form.username.data is not None:
             if form.username.data[0].isdigit():  # Check whether the first digit is a number
@@ -933,15 +1198,22 @@ class EstateAdminView(AdminEstateModelView):
                 submitted_number = str(form.telephone.data)
                 valdaite_num = phonenumbers.parse(submitted_number)
                 if not phonenumbers.is_valid_number(valdaite_num):
-                    raise ValidationError("invalid number")
+                    raise ValidationError("invalid phone number")
             except:
-                raise ValidationError("invalid number")
+                raise ValidationError("invalid phone number")
 
         # last part on my custom code to valdaite the inputed value incase html inspect change while submit form
     # Form will now use all the other fields in the model
 
     # Add our own password form field - call it password2
+    def _list_thumbnail(view, context, model, name):
+        if not model.profile_image:
+            return ''
+        return Markup('<img height="%s" width="%s" src="%s">' % (150, 150, url_for('static', filename='images/'+model.profile_image)))
 
+    column_formatters = {
+        'profile_image': _list_thumbnail
+    }
     # inline editable fildes
     column_editable_list = ['firstname','lastname','gender','streetname', 'flatnumber']
 
@@ -965,10 +1237,6 @@ class EstateAdminView(AdminEstateModelView):
             'label': 'Id',
             'validators': []
             },
-            'profile_image': {
-            'label': 'Profile Image',
-            'validators': [required()]
-            },
             'firstname': {
             'label': 'First Name',
             'validators': [required()]
@@ -984,12 +1252,6 @@ class EstateAdminView(AdminEstateModelView):
             'streetname': {
             'label': 'Streetname',
             'validators': [required()],
-            },
-            # id used in user.js to add custom toggle
-            'password_hash': {
-            'label': 'Password',
-            'id': 'user_password',
-            'validators': [required()]
             },
             'username': {
             'label': 'Username',
@@ -1016,7 +1278,6 @@ class EstateAdminView(AdminEstateModelView):
         'style': 'color: black'
     }
     }
-
     form_extra_fields = {
         'user_role': sqla.fields.QuerySelectField(
             label='User role',
@@ -1035,9 +1296,15 @@ class EstateAdminView(AdminEstateModelView):
             render_kw={'onchange': "myFunction()"},
             validate_choice=False
             ),
+        'password': PasswordField(
+            'password'
+            ),
+        'profile_image': FileUploadField('profile_image',
+                                      base_path='../static/images')
     }
+
     # remove these fileds from edit and create
-    form_excluded_columns = ['user_role','estate','guests', 'staffs', 'services', 'enquiries', 'news', 'subscriptions']
+    form_excluded_columns = ['password_hash','profile_image','user_role','estate','guests', 'staffs', 'services', 'enquiries', 'news', 'subscriptions']
     # open bootstrap modal for create and edit
     column_default_sort = [('registration_date', True)]
     column_sortable_list = ('firstname','streetname', 'lastname','registration_date','user_estate','flatnumber','housenumber','user_role','gender','username', 'dateofbirth')
@@ -1052,7 +1319,9 @@ class EstateAdminView(AdminEstateModelView):
     #column_formatters = dict(User.password_hash=lambda v, c, m, p: generate_password_hash(m.password_hash))
     # which columns can be added in create list
     # form_create_rules more powerfull from column create in can remove fields
-    form_create_rules = (rules.HTML('<h5 class="text-center p-2 mb-3 mt-2 bg-primary text-white">Personal information</h5>'), 'firstname', 'lastname','dateofbirth','gender', 'streetname', 'housenumber', 'flatnumber', 'user_estate','telephone', rules.HTML('<h5 class="text-center p-2 mb-3 mt-2 bg-secondary text-white">App information</h5>'),'username', 'password_hash', 'user_role', 'registration_date', 'profile_image')
+    form_create_rules = (rules.HTML('<h5 class="text-center p-2 mb-3 mt-2 bg-primary text-white">Personal information</h5>'), 'firstname', 'lastname','dateofbirth','gender', 'streetname', 'housenumber', 'flatnumber', 'user_estate','telephone', rules.HTML('<h5 class="text-center p-2 mb-3 mt-2 bg-secondary text-white">App information</h5>'),'username', 'password', 'user_role', 'registration_date', 'profile_image')
+    column_list = ('firstname', 'lastname','dateofbirth','gender', 'user_estate', 'streetname', 'housenumber', 'flatnumber', 'telephone', 'username', 'password', 'user_role', 'registration_date', 'profile_image')
+
     column_create_list = (User.firstname, User.lastname,User.user_estate,User.dateofbirth, User.username, User.password_hash,User.flatnumber, User.gender, User.telephone, User.housenumber)
 
 # services
@@ -1068,7 +1337,68 @@ class EstateAdminServiceView(AdminEstateModelView):
         response = render_miror(self, template, **kwargs)
         return response
 
+    def on_model_change(self, form, Service, is_created):
+        # create_dynamic_url("test?q=1") service_requested
 
+        if is_created:
+            # data = "task_id=1,guest_id=3,code=dbns1B"
+
+            db.session.flush()
+            gencode = unique_code_generator(strpool, [serv.code for serv in Service.query.all()])
+            service_salt = random.randint(10000000, 99999999)
+            current_service_id = Service.id
+            #current_service_type = form.service.data
+            Service.code = gencode
+            Service.salt = service_salt
+            Service_type = Service.service_type
+            all_handymen = Handymen.query.filter_by(service_type=Service.service_type, estate_id=current_user.estate).all()
+            message_sent_count = 0
+            message_unsent_count = 0
+            handymen_error = ""
+            # here we have all data send message to handyman
+            for handyman in all_handymen:
+                if handyman.rate < 4:
+                    continue
+                try:
+                    notification_handy_code = unique_code_generator(strpool, [noti.code for noti in HandyMenNotfications.query.all()])
+                    new_notification = HandyMenNotfications(code=notification_handy_code, message='', service_id=Service.id, handyman_id=handyman.id)
+                    db.session.add(new_notification)
+                    db.session.flush()
+                    notification_id = new_notification.id
+                    notification_code = new_notification.code
+                    data = "apply?sid={}&data=".format(Service.id)
+                    data += encrypt("hid={},nid={},hcode={},scode={}".format(handyman.id,notification_id, notification_code,Service.code), service_salt)
+                    message = "new service, {} apply: ".format(Service.service_requested) + create_dynamic_url(data)
+                    message_sent = did_you_send_notification(handyman.telephone, message, ['notification', 'handyman'])
+                    new_notification.message = message
+                    flash(message)
+                    # update cus it commit only we added also insert work but we use what we need only to avoid unexpected errors
+                    new_notification.update()
+                    if message_sent['sent']:
+                        #Service.notification_sent = True
+                        flash(message_sent['message'])
+                        message_sent_count += 1
+                    else:
+                        # if message could not be sent not let him pass
+                        message_unsent_count += 1
+                        handymenError = message_sent['message']
+                        continue
+                except Exception as e:
+                    raise ValidationError("We were unable to send a notice to the handyman due to technical error, error: {}".format(str(e)))
+
+
+
+            if len(all_handymen) > 0 and message_sent_count == 0 and len(all_handymen) != 1:
+                if message_unsent_count > 0:
+                    raise ValidationError(handymen_error + ", notification failure to {} handymen".format(message_unsent_count))
+                else:
+                    raise ValidationError("unexpected error contact support")
+
+            if len(all_handymen) > 0 and message_sent_count == 0 and len(all_handymen) == 1:
+                flash("We have no handyman With 5 stars to get the service please try again later")
+            else:
+                flash("We have sent a notification to {} of our most skilled workers".format(message_sent_count))
+            Service.update()
     form_base_class = SecureForm
     column_type_formatters = MY_DEFAULT_FORMATTERS
     can_view_details = True
@@ -1076,11 +1406,106 @@ class EstateAdminServiceView(AdminEstateModelView):
     edit_modal = True
     form_extra_fields = {
         'requester': sqla.fields.QuerySelectField(
-            label='Requester',
-            query_factory= lambda:User.query.filter_by(estate = current_user.estate).all(),
+            label='Service Requester:',
+            query_factory=lambda:User.query.filter_by(estate=current_user.estate).all(),
+            widget=Select2Widget()
+        ),
+        'serivce': sqla.fields.QuerySelectField(
+            label='Serivce:',
+            query_factory=lambda:ServiceType.query.all(),
+            widget=Select2Widget()
+        ),
+        'estate': sqla.fields.QuerySelectField(
+            label='estate',
+            query_factory= lambda:[Estate.query.filter_by(id = current_user.estate).first()],
             widget=Select2Widget()
         ),
     }
+    column_filters = ['request_date', 'user_id', 'service_requested']
+    column_searchable_list = ['id', 'user_id', 'request_date', 'service_requested']
+    column_editable_list = ['service_requested', 'user_id', 'request_date']
+    form_excluded_columns = ['code','handyman', 'salt','approved','last_approve_date']
+
+    column_default_sort = [('request_date', True)]
+    column_sortable_list = ('service_requested','user_id', 'request_date', 'request_date', 'id')
+    column_create_list = ('service_requested', 'request_date')
+    column_list = ('id','requester', 'service_requested', 'request_date')
+    form_args = {
+            'service_requested': {
+            'label': 'Service Requested',
+            'validators': [required()]
+            },
+            'request_date': {
+            'label': 'Request Date',
+            'id': 'req_date',
+            'validators': [required()]
+            }
+    }
+
+
+class EstateAdminHandyMenView(AdminEstateModelView):
+
+    form_base_class = SecureForm
+    column_type_formatters = MY_DEFAULT_FORMATTERS
+
+    @estate_admin_permission.require(http_exception=403)
+    def render(self, template, **kwargs):
+        kwargs['data'] = self.model.query.filter_by(estate_id=current_user.estate).all()
+        self.extra_js = [url_for("static", filename="admin/js/phonenumbers.js"), url_for("static", filename="admin/js/custom_rating_input.js"), "https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/js/intlTelInput.min.js"]
+        self.extra_css = ['https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/css/intlTelInput.css']
+        response = render_miror(self, template, **kwargs)
+        return response
+
+
+    def on_model_change(self, form, HandyMan, is_created):
+
+        if "telephone" in form and form.telephone.data is not None:
+            try:
+                submitted_number = str(form.telephone.data)
+                valdaite_num = phonenumbers.parse(submitted_number)
+                if not phonenumbers.is_valid_number(valdaite_num):
+                    raise ValidationError("invalid phone number")
+            except:
+                raise ValidationError("invalid phone number")
+
+    form_overrides = {
+      'bank_account_number': StringField
+    }
+    form_excluded_columns = ['estate']
+    form_extra_fields = {
+        'estate': sqla.fields.QuerySelectField(
+            label='Estate',
+            query_factory= lambda:[Estate.query.filter_by(id=current_user.user_estate.id).first()],
+            widget=Select2Widget(),
+            validators = [validators.DataRequired()]
+        ),
+    }
+
+
+
+    """
+
+    column_create_list = (User.firstname, User.lastname, User.dateofbirth, User.username, User.password_hash, User.streetname, User.housenumber, User.flatnumber, User.gender, User.telephone, User.role, User.estate)
+        'user_role': sqla.fields.QuerySelectField(
+            label='User role',
+            query_factory= lambda:Role.query.filter(Role.name != 'superadmin').filter(Role.name != 'estateadmin').all(),
+            widget=Select2Widget()
+        ),
+        'user_estate': sqla.fields.QuerySelectField(
+            label='The Estate',
+            query_factory= lambda:Estate.query.filter(Estate.id == current_user.user_estate.id).all(),
+            widget=Select2Widget()
+        ),
+        'streetname': SelectField(
+            'streetname',
+            coerce=str,
+            choices=([street.streetname for street in StreetsMetadata.query.all()]),
+            render_kw={'onchange': "myFunction()"},
+            validate_choice=False
+            ),
+        'password': PasswordField(
+            'password'
+            ),
     column_filters = ['request_date', 'user_id', 'service_requested']
     column_searchable_list = ['id', 'user_id', 'request_date', 'service_requested']
     column_editable_list = ['service_requested', 'user_id', 'request_date']
@@ -1100,7 +1525,7 @@ class EstateAdminServiceView(AdminEstateModelView):
             'validators': [required()]
             }
     }
-
+    """
 
 class EstateAdminCodeGen(AdminEstateModelView):
 
@@ -1179,16 +1604,19 @@ class EstateAdminCodeGen(AdminEstateModelView):
 
 
 class EstateAdminPublication(AdminEstateModelView):
-
+    def on_model_change(self, form, model, is_created):
+        if is_created:
+            model.users = current_user
     @estate_admin_permission.require(http_exception=403)
     def render(self, template, **kwargs):
         # new ways for query now at least 4 ways to joining two or three tables and more at comments and other things not only join
         # print(db.session.query(Publication).all()[0].users.estate)select_from()
         # this will return all publications inside the current logged estate admin estate
-        kwargs['data'] = db.session.query(self.model.id,self.model.id, self.model.user_id, self.model.publication, self.model.news_date, self.model.users, User.estate).join(User, self.model.user_id == User.id).filter(User.estate==current_user.estate).all()
+        kwargs['data'] = db.session.query(self.model.id, self.model.user_id, self.model.publication, self.model.news_date, self.model.users, User.estate).join(User, self.model.user_id == User.id).filter(User.estate==current_user.estate).all()
         # un related comment to current class kwargs['data'] = self.model.query.filter(self.model.user_estate == current_user.user_estate, not_(self.model.user_role.in_([1,2]))).all()
         response = render_miror(self, template,**kwargs)
         return response
+
     form_base_class = SecureForm
     column_type_formatters = MY_DEFAULT_FORMATTERS
     can_view_details = True
@@ -1196,6 +1624,7 @@ class EstateAdminPublication(AdminEstateModelView):
     column_filters = ['id', 'user_id', 'publication', 'news_date']
     column_searchable_list = ['id', 'user_id']
     column_editable_list = ['publication']
+    form_excluded_columns = ['users']
     column_sortable_list = ['id', 'user_id', 'publication', 'news_date']
     column_list = ('id', 'user_id', 'publication', 'news_date')
     # form_excluded_columns = ['code_role', 'id','estate','role', 'code_estate', 'unused', 'user', 'user_role']
@@ -1218,9 +1647,9 @@ class EstateAdminStaff(AdminEstateModelView):
                 submitted_number = str(form.telephone.data)
                 valdaite_num = phonenumbers.parse(submitted_number)
                 if not phonenumbers.is_valid_number(valdaite_num):
-                    raise ValidationError("invalid number")
+                    raise ValidationError("invalid phone number")
             except:
-                raise ValidationError("invalid number")
+                raise ValidationError("invalid phone number")
 
     form_base_class = SecureForm
     column_type_formatters = MY_DEFAULT_FORMATTERS
@@ -1240,8 +1669,7 @@ admin.add_view(EstateAdminServiceView(Service, db.session, endpoint='/estate-adm
 admin.add_view(EstateAdminCodeGen(Code, db.session, endpoint='/estate-admin/codegen', category='estate-admin'))
 admin.add_view(EstateAdminPublication(Publication, db.session, endpoint='/estate-admin/publications', category='estate-admin'))
 admin.add_view(EstateAdminStaff(Staff, db.session, endpoint='/estate-admin/staff', category='estate-admin'))
-
-
+admin.add_view(EstateAdminHandyMenView(Handymen, session=db.session, name='HandyMen', endpoint='/estate-admin/handymen', category='estate-admin'))
 
 
 
@@ -1260,7 +1688,7 @@ class Roled(object):
 
     def _handle_view(self, name, *args, **kwargs):
         if current_user.is_anonymous:
-            return redirect(url_for_security('login', next="/admin"))
+            return redirect(url_for('core.login', next="/admin"))
         if not self.is_accessible():
             # return self.render("admin/denied.html")
             return "<p>Access denied</p>"
@@ -1271,7 +1699,7 @@ class GuardMainView(Roled, ModelView):
     can_edit = False
     can_delete = False
 
-    @guard_permission.require(http_exception=403)
+    # @guard_permission.require(http_exception=403)
     def is_accessible(self):
         if current_user and current_user.is_anonymous:
             return False
@@ -1283,6 +1711,64 @@ class GuardMainView(Roled, ModelView):
         self.roles_accepted = kwargs.pop('roles_accepted', list())
         super(GuardMainView, self).__init__(*args, **kwargs)
 
+
+def return_valid_guests(guest_id, type="approved", approved=False):
+    try:
+        the_guest = Guest.query.filter_by(id=guest_id, approved=approved).first()
+        if the_guest:
+            return {'guest': the_guest, 'message': 'Request approved: a guest with ID {} has been {}'.format(guest_id, type)}
+        else:
+            return {'guest': the_guest, 'message': 'Request rejected: a guest with ID {} has already been {}.'.format(guest_id, type)}
+
+    except Exception as e:
+        print(sys.exc_info())
+        return {'guest': None, 'message': 'Unexpted Error: Happend While approve User With ID {} System Error: {}'.format(guest_id, str(sys.exc_info()))}
+    return {'guest': None, 'message': 'Unexpted Error: Can not Approve Guest with ID {} Error code :001'.format(guest_id)}
+
+def guests_actions(guest_list, action='approve'):
+    already_approved = []
+    approved = []
+    total_approved = 0
+    sms_sent = 0
+    current_guests = len(guest_list)
+
+    for the_guest in guest_list:
+        if the_guest['guest']:
+            if the_guest['guest'].approved == False and action == 'approve':
+                try:
+                    submitted_number = str(the_guest['guest'].host.telephone)
+                    valdaite_num = phonenumbers.parse(submitted_number)
+                    if phonenumbers.is_valid_number(valdaite_num):
+                        guestfullname = str(the_guest['guest'].firstname) + ' ' + str(the_guest['guest'].lastname)
+                        message = "Hello, {} your guest {} has arrived and our guards have approved".format(the_guest['guest'].host.firstname, guestfullname)
+                        message_sent = did_you_send_notification(str(the_guest['guest'].host.telephone), message, ['notification', 'guest host'])
+                        flash(message_sent['message'])
+                except:
+                    flash("The notification cannot be sent to the guest host")
+                # here action is approve and correct
+                the_guest['guest'].approved = True
+                the_guest['guest'].update()
+                flash(the_guest['message'])
+
+            elif the_guest['guest'].approved == True and action == 'approve':
+                # here action is approve while it already approved show message only
+                flash(the_guest['message'])
+
+            elif the_guest['guest'].approved == True and action == 'disapprove':
+                # here action dissapprove and approve is True correct
+                the_guest['guest'].approved = False
+                the_guest['guest'].update()
+                flash(the_guest['message'])
+
+            elif the_guest['guest'].approved == False and action == 'disapprove':
+                # here action dissapprove and status already false
+                flash(the_guest['message'])
+
+            else:
+                flash(the_guest['message'])
+        else:
+            flash(the_guest['message'])
+    return True
 # Note Inhiret the class from the right view not modal view
 class GuardAdminGuestsView(GuardMainView):
     @guard_permission.require(http_exception=403)
@@ -1309,6 +1795,36 @@ class GuardAdminGuestsView(GuardMainView):
         response = render_miror(self, template, **kwargs)
         return response
         # return super(GuardAdminGuestsView, self).render(template, **kwargs)
+    # approve guests action
+
+    @action('approve', 'Approve', 'Are you sure you want to approve selected Guests?')
+    def action_approve(self, ids):
+        try:
+            # I keep normal map here as there are default paramter with approve
+            valid_guests_to_approve = list(map(return_valid_guests, ids))
+            guests_actions(valid_guests_to_approve, 'approve')
+            #print(list(anything))
+            #return str(anything)
+        except Exception as ex:
+            # handle and troubleshot errors
+            print(sys.exc_info())
+            raise
+
+    @action('disapprove', 'Disapprove', 'Are you sure you want to disapprove the selected guests?')
+    def action_disapprove(self, ids):
+        try:
+            # we use map to repeat actions with the list in professional way but this advanced map with lambda to accept
+            # additonal paramter which used to less repeat code and handle both actions with valid message
+            valid_action_list = list(map(lambda p: return_valid_guests(p, "disapproved", True), ids))
+            guests_actions(valid_action_list, 'disapprove')
+            #print(list(anything))
+            #return str(anything)
+        except Exception as ex:
+            # handle and troubleshot errors
+            print(sys.exc_info())
+            raise
+
+
     """
     form_extra_fields = {
         'host': sqla.fields.QuerySelectField(
@@ -1325,12 +1841,12 @@ class GuardAdminGuestsView(GuardMainView):
     column_searchable_list = ['firstname', 'lastname', 'telephone']
     column_default_sort = [('visit_date', True)]
     column_sortable_list = ('firstname','lastname', 'visit_date', 'gender', 'telephone')
-    column_list = ('host', 'visit_date', 'firstname', 'lastname', 'gender', 'telephone')
+    column_list = ('host', 'visit_date', 'firstname', 'lastname', 'gender', 'telephone', 'guest_code', 'approved')
 
 
 class GuardPublicationView(GuardMainView):
 
-    @estate_admin_permission.require(http_exception=403)
+    @guard_permission.require(http_exception=403)
     def render(self, template, **kwargs):
         # new ways for query now at least 4 ways to joining two or three tables and more at comments and other things not only join
         # print(db.session.query(Publication).all()[0].users.estate)still super reusable
@@ -1344,16 +1860,36 @@ class GuardPublicationView(GuardMainView):
     form_base_class = SecureForm
     column_type_formatters = MY_DEFAULT_FORMATTERS
     can_view_details = True
-    edit_modal = True
+    edit_modal = False
+    can_edit = False
+    can_delete = False
+    can_create = False
     column_filters = ['id', 'user_id', 'publication', 'news_date']
     column_searchable_list = ['id', 'user_id']
-    column_editable_list = ['publication']
     column_sortable_list = ['id', 'user_id', 'publication', 'news_date']
     column_list = ('id', 'user_id', 'publication', 'news_date')
     # form_excluded_columns = ['code_role', 'id','estate','role', 'code_estate', 'unused', 'user', 'user_role']
+class GuardStaffView(GuardMainView):
+
+    @guard_permission.require(http_exception=403)
+    def render(self, template, **kwargs):
+        # new ways for query now at least 4 ways to joining two or three tables and more at comments and other things not only join
+        # print(db.session.query(Publication).all()[0].users.estate)still super reusable
+        # this will return all publications inside the current logged estate admin estate
+        kwargs['data'] = db.session.query(self.model.id, self.model.user_id, self.model.firstname, self.model.lastname, self.model.dateofbirth, self.model.gender, self.model.jobdescription,User.estate).join(User, self.model.user_id == User.id).filter(User.estate==current_user.estate).all()
+
+        # un related comment to current class kwargs['data'] = self.model.query.filter(self.model.user_estate == current_user.user_estate, not_(self.model.user_role.in_([1,2]))).all()
+        response = render_miror(self, template,**kwargs)
+        return response
+    can_edit = False
+    can_create = False
+    can_delete = False
+
+
 
 admin.add_view(GuardAdminGuestsView(Guest, db.session, endpoint='/guard/guests', roles_accepted=['superadmin','estateadmin','guard'], category='Guard'))
 admin.add_view(GuardPublicationView(Publication, db.session, endpoint='/guard/news', roles_accepted=['superadmin','estateadmin','guard'], category='Guard'))
+admin.add_view(GuardStaffView(Staff, db.session, endpoint='/guard/staff', roles_accepted=['superadmin','estateadmin','guard'], category='Guard'))
 
 
 class LogoutLink(MenuLink):
@@ -1379,7 +1915,7 @@ import datetime
 def gethouses():
     request_data = request.args
     if request_data and 'street' in request_data:
-        street = StreetsMetadata.query.filter(StreetsMetadata.streetname == request_data['street']).one_or_none()
+        street = StreetsMetadata.query.filter_by(streetname = request_data['street']).one_or_none()
         if street:
             street_houses = lambda:giveMeAllHousesList(street.excluded, street.min, street.max)
             response = {'code': 200, 'houses': street_houses(), 'selected': 0}
@@ -1394,6 +1930,31 @@ def gethouses():
     else:
         return jsonify({'code': 400, 'street': [], 'selected': 0})
 
+import datetime
+
+
+
+@adminapp.route('/test')
+def adduser1():
+    x = Guest.query.first()
+    #data = db.session.query(Guest.user_id, User.role, Role.name).join(Guest, Guest.user_id == User.id).join(Role, Role.id == User.role).filter(Role.name=='occupant').all()
+    #if data:
+    #    guest_host = data[0][1]
+    return str(x.host)
+    occupant = User.query.filter(User.user_role().id=='occupant').first()
+    return str(occupant)
+    return create_dynamic_url("test?q=1")
+
+
+@adminapp.route('/add')
+def adduser():
+    x = ServiceType.query.first()
+    y = User.query.first()
+    z = Handymen.query.first()
+    l = Service.query.first()
+    guests = User.query.first().guests
+    newGuest = Guest(user_id=1, visit_date=datetime.datetime.now(), firstname='y', lastname='z', gender='male', telephone='+12015556424', guest_code='ABCDE')
+    return str(guests.all())
 """
 @super_admin_permission.require(http_exception=403)
 @adminapp.route('/add')

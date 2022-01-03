@@ -1,3 +1,36 @@
+const onFlaskFormLoad = async function (){
+  // this for edit form check if username onload that means edit form
+  // add this to the request
+  const userName = document.querySelector("#username");
+
+  const streetSelect = document.querySelector("#streetname");
+  const checkIfForm = document.querySelector("form");
+  if (checkIfForm){
+    const houseSelect = document.querySelector("#housenumber");
+    let apiUrl = `/get_houses_numbers?street=${streetSelect.value}`;
+    if (userName && userName.value != ""){
+      apiUrl = `/get_houses_numbers?street=${streetSelect.value}&username=${userName.value}`;
+    }
+    const res = await fetch(apiUrl);
+    const data = await res.json();
+    console.log(data);
+    if (data.code == 200){
+      const myFragment = document.createDocumentFragment();
+      data.houses.forEach( (houseOption, index)=>{
+        let newHouse = document.createElement("option");
+        newHouse.setAttribute("value", houseOption);
+        newHouse.innerText = houseOption;
+        myFragment.appendChild(newHouse);
+        // if this edit form so select the user room
+
+      });
+      houseSelect.appendChild(myFragment);
+    }
+
+
+  }
+}
+
 window.addEventListener('DOMContentLoaded', (event) => {
   /* this to fix crtical problem at flask-admin add custom way to detect if id input changed
   by abuser inspect its rare case but I like 0 errors specialy when I know the error*/
@@ -26,35 +59,7 @@ window.addEventListener('DOMContentLoaded', (event) => {
     default loaded streetname and add house number on that select this select will used
     to guide creator of the house number or to select the house number
   */
-  async function onFlaskFormLoad(){
-    // this for edit form check if username onload that means edit form
-    // add this to the request
-    const userName = document.querySelector("#username");
 
-    const streetSelect = document.querySelector("#streetname");
-    const checkIfForm = document.querySelector("form");
-    if (checkIfForm){
-      const houseSelect = document.querySelector("#housenumber");
-      let apiUrl = `/get_houses_numbers?street=${streetSelect.value}`;
-      if (userName && userName.value != ""){
-        apiUrl = `/get_houses_numbers?street=${streetSelect.value}&username=${userName.value}`;
-      }
-      const res = await fetch(apiUrl);
-      const data = await res.json();
-      console.log(data);
-      if (data.code == 200){
-        data.houses.forEach( (houseOption, index)=>{
-          let newHouse = document.createElement("option");
-          newHouse.setAttribute("value", houseOption);
-          newHouse.innerText = houseOption;
-          // if this edit form so select the user room
-          houseSelect.appendChild(newHouse);
-        });
-      }
-
-
-    }
-  }
 
   onFlaskFormLoad();
 
@@ -66,12 +71,14 @@ window.addEventListener('DOMContentLoaded', (event) => {
     console.log(data);
     if (data.code == 200){
       houseSelect.innerHTML = "";
+      const myFragment1 = document.createDocumentFragment();
       data.houses.forEach( (houseOption, index)=>{
         let newHouse = document.createElement("option");
         newHouse.setAttribute("value", houseOption);
         newHouse.innerText = houseOption;
-        houseSelect.appendChild(newHouse);
+        myFragment1.appendChild(newHouse);
       });
+      houseSelect.appendChild(myFragment1);
     }
   }
 

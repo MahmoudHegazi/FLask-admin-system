@@ -1,5 +1,19 @@
 
 $( document ).ready(function() {
+  /* due to less edit flask admin and make override or not good checks
+  I use js to check if it create form sure username will empty in create when page load
+  and it will add the star and required attribute also if user close javascript the flask will raise error
+  if empty password in create form  no chance for problem here + good UX*/
+  const checkIFCreateUsername = document.querySelector("#username");
+  const getPasswordInput = document.querySelector("#password");
+  if (checkIFCreateUsername && getPasswordInput && checkIFCreateUsername.value === ''){
+    let passwordLabel = getPasswordInput.parentElement.querySelector("label");
+    if (passwordLabel){
+      passwordLabel.innerHTML += "<strong style='color:red;margin-left:-5px'>*</strong>"
+      getPasswordInput.required = true;
+    }
+  }
+
   /* this to fix crtical problem at flask-admin add custom way to detect if id input changed
   by abuser inspect its rare case but I like 0 errors specialy when I know the error*/
   const streetnameInput = document.querySelector("#streetname");
@@ -39,37 +53,36 @@ $( document ).ready(function() {
       if (!checkSelect){
         const mySelectBox = document.createElement("select");
         const houseString = document.querySelector("#housenumber");
-        const houseStringCont = houseString.parentElement;
-        mySelectBox.classList.add("form-control")
-        mySelectBox.id = "realSelect";
-        houseStringCont.appendChild(mySelectBox);
-        mySelectBox.addEventListener("change", customFlaskAdminUnpredefinedSelect);
-        houseString.setAttribute("readonly", "readonly");
-        let apiUrl = `/get_houses_numbers?street=${streetSelect.value}`;
-        if (userName && userName.value != ""){
-          apiUrl = `/get_houses_numbers?street=${streetSelect.value}&username=${userName.value}`;
+        if (houseString) {
+          const houseStringCont = houseString.parentElement;
+          mySelectBox.classList.add("form-control")
+          mySelectBox.id = "realSelect";
+          houseStringCont.appendChild(mySelectBox);
+          mySelectBox.addEventListener("change", customFlaskAdminUnpredefinedSelect);
+          houseString.setAttribute("readonly", "readonly");
+          let apiUrl = `/get_houses_numbers?street=${streetSelect.value}`;
+          if (userName && userName.value != ""){
+            apiUrl = `/get_houses_numbers?street=${streetSelect.value}&username=${userName.value}`;
+          }
+          const res = await fetch(apiUrl);
+          const data = await res.json();
+          console.log(data);
+          if (data.code == 200 && mySelectBox){
+            data.houses.forEach( (houseOption, index)=>{
+              let newHouse = document.createElement("option");
+              newHouse.setAttribute("value", houseOption);
+              newHouse.innerText = houseOption;
+              // if this edit form so select the user room
+              if (data.selected != 0 && data.selected == houseOption){
+                houseString.value = houseOption;
+                newHouse.setAttribute("selected", "true");
+              } else {
+                if (index == 0){houseString.value = houseOption;}
+              }
+              mySelectBox.appendChild(newHouse);
+            });
+          }
         }
-        const res = await fetch(apiUrl);
-        const data = await res.json();
-        console.log(data);
-        if (data.code == 200 && mySelectBox){
-          data.houses.forEach( (houseOption, index)=>{
-            let newHouse = document.createElement("option");
-            newHouse.setAttribute("value", houseOption);
-            newHouse.innerText = houseOption;
-            // if this edit form so select the user room
-            if (data.selected != 0 && data.selected == houseOption){
-              houseString.value = houseOption;
-              newHouse.setAttribute("selected", "true");
-            } else {
-              if (index == 0){houseString.value = houseOption;}
-            }
-
-            mySelectBox.appendChild(newHouse);
-          });
-        }
-
-
       }
     }
   }
@@ -102,22 +115,24 @@ function customFlaskAdminUnpredefinedSelect(){
 async function myFunction(){
   const streetSelect = document.querySelector("#streetname");
   const houseString = document.querySelector("#housenumber");
-  const houseStringCont = houseString.parentElement;
+  if (houseString){
+    const houseStringCont = houseString.parentElement;
 
-  const theSelect = document.querySelector("#realSelect");
-  const res = await fetch(`/get_houses_numbers?street=${streetSelect.value}`);
-  const data = await res.json();
-  console.log(data);
-  if (data.code == 200 && theSelect){
-    theSelect.innerHTML = "";
-    data.houses.forEach( (houseOption, index)=>{
-      if (index == 0){
-        houseString.value = houseOption;
-      }
-      let newHouse = document.createElement("option");
-      newHouse.setAttribute("value", houseOption);
-      newHouse.innerText = houseOption;
-      theSelect.appendChild(newHouse);
-    });
+    const theSelect = document.querySelector("#realSelect");
+    const res = await fetch(`/get_houses_numbers?street=${streetSelect.value}`);
+    const data = await res.json();
+    console.log(data);
+    if (data.code == 200 && theSelect){
+      theSelect.innerHTML = "";
+      data.houses.forEach( (houseOption, index)=>{
+        if (index == 0){
+          houseString.value = houseOption;
+        }
+        let newHouse = document.createElement("option");
+        newHouse.setAttribute("value", houseOption);
+        newHouse.innerText = houseOption;
+        theSelect.appendChild(newHouse);
+      });
+    }
   }
 }
