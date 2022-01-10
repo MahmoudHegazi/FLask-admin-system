@@ -10,7 +10,6 @@ from sqlalchemy.orm import backref
 def load_user(user_id):
     return User.query.get(user_id)
 
-
 class Estate(db.Model, UserMixin):
     __tablename__ = 'estates'
     id = db.Column(db.Integer, primary_key=True)
@@ -116,6 +115,7 @@ class Role(db.Model, UserMixin):
 
 class StreetsMetadata(db.Model, UserMixin):
     __tablename__ = 'streets_metadata'
+    __table_args__ =  (db.UniqueConstraint('streetname'),)
 
     id = db.Column(db.Integer, primary_key=True)
     streetname = db.Column(db.String, nullable=False)
@@ -590,6 +590,38 @@ class ServiceMetaData(db.Model):
     def delete(self):
         db.session.delete(self)
         db.session.commit()
+
+
+class ResetPasswordTokens(db.Model):
+    __tablename__ = 'reset_password_tokens'
+    id = db.Column(db.Integer, primary_key=True)
+    hash_code = db.Column(db.String, nullable=False)
+    create_date =db.Column(db.DateTime, default=datetime.utcnow(), nullable=False)
+    expiry_date =db.Column(db.DateTime, default=None, nullable=True)
+    expired = db.Column(db.Boolean, default=False, nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    user = db.relationship('User')
+
+    def __init__(self, hash_code, create_date, expiry_date, user_id):
+        self.hash_code = hash_code
+        self.create_date = create_date
+        self.expiry_date = expiry_date
+        self.user_id = user_id
+        self.hash_code = hash_code
+
+    def __repr__(self):
+        return f"CreateDate:{self.create_date}, expiry_date: {self.expiry_date}"
+
+    def insert(self):
+        db.session.add(self)
+        db.session.commit()
+
+    def update(self):
+        db.session.commit()
+
+    def delete(self):
+        db.session.delete(self)
+        db.session.commit()
 # clear and rebuild database comment in proudction
 # add the roles for the app
 """
@@ -600,7 +632,7 @@ class ServiceMetaData(db.Model):
 db.drop_all()
 db.create_all()
 
-n = User(firstname='super', lastname='admin', dateofbirth=datetime.now(), username='admin', password_hash='admin', streetname='streetx', housenumber='1', flatnumber='2', gender='male', telephone='+12016466668', role=1, estate=1)
+n = User(firstname='super', lastname='admin', dateofbirth=datetime.now(), username='admin@gmail.com', password_hash='admin', streetname='streetx', housenumber='1', flatnumber='2', gender='male', telephone='+12016466668', role=1, estate=1)
 n.insert()
 """
 

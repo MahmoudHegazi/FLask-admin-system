@@ -13,9 +13,16 @@
 
           <div class="col-auto my-1">
             <div class="form-group col-md-4">
-            {{form.service_requested(class='form-control')  }}
+            {{form.serivce_type(class='form-control', title='Service Category')  }}
             </div>
           </div>
+
+          <div class="col-auto my-1">
+            <div class="form-group col-md-4">
+            {{form.service_requested(class='form-control', placeholder='Service Title', title='Enter Service title make sure it less than 30 characters')  }}
+            </div>
+          </div>
+
 
           <div class="col-auto my-1">
             <div class="form-group col-md-4">

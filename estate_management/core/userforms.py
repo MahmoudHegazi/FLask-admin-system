@@ -3,10 +3,13 @@ from flask_wtf import Form
 from wtforms import TextField, BooleanField, TextAreaField
 from wtforms.validators import Required, Length
 from wtforms import SubmitField, HiddenField,StringField, TextField, IntegerField, DateTimeField, PasswordField, RadioField, SelectMultipleField, ValidationError,SelectField, widgets, FileField
-from wtforms.validators import DataRequired, EqualTo, Regexp
+from wtforms.validators import DataRequired, EqualTo, Regexp, Email
+from wtforms import validators
 from flask_wtf.file import FileField, FileAllowed
 from estate_management.usermodels import User, Staff, Guest, Service, Enquiry, Publication, Subscription
 from flask_login import current_user
+from wtforms.fields.html5 import EmailField
+from flask import flash
 from estate_management.core.guardCodeGenerator import code_generator
 from datetime import datetime
 import phonenumbers
@@ -24,21 +27,31 @@ class GeneratorForm(FlaskForm):
 
 
 class LoginForm(FlaskForm):
-    username = StringField('Username', validators=[DataRequired()])
+    remeber_me = BooleanField('remeber_me')
+    username = EmailField(validators=[DataRequired()])
     password = PasswordField('Password', validators=[DataRequired()])
     submit = SubmitField('Log In')
+
+class ResetPassword(FlaskForm):
+    email = EmailField('email', validators=[DataRequired('Email Is required'), Email(message='invalid email address')])
+    submit = SubmitField('Send Reset Password Email')
+
+class UpdatePassword(FlaskForm):
+    password = PasswordField('Password', validators=[DataRequired()])
+    pass_confirm = PasswordField('Confirm Password', validators=[DataRequired(),EqualTo('password', message='Passwords must match')])
+    submit = SubmitField('Update Password')
+    
 
 class CodeForm(FlaskForm):
     registrationCode = StringField('Registration code', validators=[DataRequired()])
     fullName = StringField('full name', validators=[DataRequired()])
     submit = SubmitField('Submit')
-
 class UserForm(FlaskForm):
     #id = IntegerField()
     firstname = StringField('Firstname', validators=[DataRequired()])
     lastname = StringField('Lastname', validators=[DataRequired()])
     dateofbirth = DateTimeField('Date of Birth', format='%d/%m/%Y', validators=[DataRequired(message="Valid date of birth is required ex 01/01/1970")])
-    username = StringField('Username', validators=[DataRequired()])
+    username = StringField('Username', validators=[DataRequired()], description='please enter valid email address')
     password = PasswordField('Password', validators=[DataRequired()])
     pass_confirm = PasswordField('Confirm Password', validators=[DataRequired(),EqualTo('password', message='Passwords must match')])
     streetname = SelectField('Street Name', validate_choice=False, validators=[DataRequired()])
@@ -116,17 +129,23 @@ class StaffForm(FlaskForm):
 
 
 class ServiceForm(FlaskForm):
+
     #id = HiddenField()
     user_id = IntegerField('Requester id')
-    service_requested = SelectField('Service Requested', validators=[DataRequired()], choices=[('carpentry','Carpentry'),('electrical','Electrical'),('fumigation','Fumigation'),('generator repair','Generator Repair'),('car wash','Mobile Car Wash'),('plumber','Plumber'),('welder','Welder')])
+    serivce_type = SelectField('Service Type', validate_choice=False, validators=[DataRequired()])
+    service_requested = TextField('Service Title', validators=[DataRequired(), Length(max=30, message='Title must be less than 30 characters')])
     request_date = DateTimeField('Request Date', default=datetime.today, validators=[DataRequired()])
     submit = SubmitField('Request Service')
 
+    def validate_service_requested(self, field):
+        if len(field.data) > 30:
+            flash("Title must be less than 30 characters")
 
 class EnquiryForm(FlaskForm):
     #id = HiddenField()
     user_id = IntegerField('Asker id')
     enquiry = TextAreaField('Enquiry/Complaint', validators=[DataRequired()])
+
     enquiry_date = DateTimeField('Enquiry/Complaint Date', default=datetime.today, validators=[DataRequired()])
     submit = SubmitField('Submit')
 

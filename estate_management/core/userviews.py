@@ -1,22 +1,30 @@
-from flask import render_template, request, flash, redirect, url_for, Blueprint, session, current_app, jsonify
+from flask import render_template,json, request, flash, redirect, url_for, Blueprint, session, current_app, jsonify
 from flask_login import login_user, current_user, logout_user, login_required
-from estate_management.core.userforms import UserForm, GuestForm, StaffForm, ServiceForm, LoginForm, EnquiryForm, NewsForm, SubscriptionForm, UpdateUserForm, CodeForm, GeneratorForm
-from estate_management.usermodels import User, Guest, Staff, Service, Enquiry, Publication, Subscription, Code, StreetsMetadata, Handymen, HandyMenNotfications, ServiceMetaData
+from estate_management.core.userforms import UserForm, GuestForm, StaffForm, ServiceForm, LoginForm, EnquiryForm, NewsForm, SubscriptionForm, UpdateUserForm, CodeForm, GeneratorForm, ResetPassword, UpdatePassword
+from estate_management.usermodels import User, Guest, Staff, Service, Enquiry, Publication, Subscription, Code, StreetsMetadata, Handymen, HandyMenNotfications, ServiceMetaData, ServiceType, ResetPasswordTokens
 from estate_management.core.picture_handler import add_profile_pic
 from estate_management.core.guardCodeGenerator import code_generator, strpool, unique_code_generator1, strpool
-from estate_management import giveMeAllHousesList, getValidExclude
+from estate_management import giveMeAllHousesList, getValidExclude, app
 from estate_management.core.twilio_sms import valdiate_phone, did_you_send_notification
-from estate_management.core.easy_encrypt import decrypt, give_me_valid_object
+from estate_management.core.easy_encrypt import encrypt, decrypt, give_me_valid_object
 from wtforms.validators import AnyOf, ValidationError
-from estate_management import db, stripe_key, super_admin_permission, super_admin_permission, estate_admin_permission, guard_permission
+from werkzeug.security import generate_password_hash, check_password_hash
+from estate_management import db, stripe_key, super_admin_permission, super_admin_permission, estate_admin_permission, guard_permission, create_dynamic_url, mail, Message, Mail
 from flask_principal import Principal, Identity, AnonymousIdentity, \
      identity_changed
 import sys
 import datetime
 import time
+import random
+
 
 core = Blueprint('core',__name__, template_folder='templates')
 
+
+# create url with query paremeters or without
+def dynamic_endpointurl(path, url_data):
+    the_base_url = str(request.base_url.split("/")[0] + "//" + request.host + "/" + path + "" +  "")
+    return the_base_url + str(url_data)
 
 # function to display all possible unique error wtf forms to flash after redirect
 
@@ -93,8 +101,12 @@ def login():
             flash("User is not registered! Please register!")
             return redirect(url_for('core.createUser'))
 
+        # enable remeber me part
+        is_remeberme_checked = form.remeber_me.data == True
         if user.check_password(form.password.data) and user is not None:
-            login_user(user)
+            remeber_user = is_remeberme_checked
+            # set the remeber to the value of check box input form.remeber_me.data default by user now
+            login_user(user, remember=is_remeberme_checked, duration=datetime.timedelta(days=5))
             flash('Logged in successfully.')
 
             # Tell Flask-Principal the identity changed
@@ -526,26 +538,125 @@ def allstafflist():
 @login_required
 def createService():
     form = ServiceForm(request.form)
+    # service is what client request like task has it own data and send notifcation to handyman when created
+    # service type is the category of the serveice each cateogry has his own handymens and send it own notifcation
+    serivce_types = [(type.id, type.service) for type in ServiceType.query.all()]
     services = Service.query.all()
+    form.serivce_type.choices = serivce_types
+    form.serivce_type.validate_choice = True
     if form.validate_on_submit():
+
         service = Service(user_id=current_user.id, service_requested=form.service_requested.data, request_date=form.request_date.data)
+        db.session.add(service)
+        service.service_type = form.serivce_type.data
+
+        #
+        gencode = unique_code_generator1(strpool, [serv.code for serv in Service.query.all()])
+        service_salt = random.randint(10000000, 99999999)
+
+        current_service_id = service.id
+        #current_service_type = form.service.data
+        service.code = gencode
+        service.salt = service_salt
+        type_id = form.serivce_type.data
+        all_handymen = Handymen.query.filter_by(service_type=type_id, estate_id=current_user.estate).all()
+        message_sent_count = 0
+        message_unsent_count = 0
+        handymen_error = ""
+        # here we have all data send message to handyman
+        for handyman in all_handymen:
+            if handyman.rate < 4:
+                continue
+            try:
+                notification_handy_code = unique_code_generator1(strpool, [noti.code for noti in HandyMenNotfications.query.all()])
+                new_notification = HandyMenNotfications(code=notification_handy_code, message='', service_id=service.id, handyman_id=handyman.id)
+
+                db.session.add(new_notification)
+                db.session.flush()
+                # db.session.rollback()
+                notification_id = new_notification.id
+                notification_code = new_notification.code
+                data = "apply?sid={}&data=".format(current_service_id)
+                data += encrypt("hid={},nid={},hcode={},scode={}".format(handyman.id,notification_id, notification_code,service.code), service_salt)
+                message = "new service, {} apply: ".format(service.service_requested) + create_dynamic_url(data)
+                message_sent = did_you_send_notification(handyman.telephone, message, ['notification', 'handyman'])
+                new_notification.message = message
+                flash(message)
+                # update cus it commit only we added also insert work but we use what we need only to avoid unexpected errors
+                new_notification.update()
+                if message_sent['sent']:
+                    #Service.notification_sent = True
+                    flash(message_sent['message'])
+                    message_sent_count += 1
+                else:
+                    # if message could not be sent not let him pass
+                    message_unsent_count += 1
+                    handymenError = message_sent['message']
+                    continue
+            except Exception as e:
+                if service:
+                    service.delete()
+                db.session.rollback()
+                flash("We were unable to send a notice to the one of the handyman due to technical error, error: {}".format(str(e)))
+
+
+        if len(all_handymen) > 0 and message_sent_count == 0 and len(all_handymen) != 1:
+            if message_unsent_count > 0:
+                flash(handymen_error + ", notification failure to {} handymen".format(message_unsent_count))
+                return render_template("service.html", form=form, services=services, services_types=serivce_types)
+
+            else:
+                db.session.rollback()
+                flash("unexpected error contact support")
+                return render_template("service.html", form=form, services=services, services_types=serivce_types)
+
+
+        if len(all_handymen) > 0 and message_sent_count == 0 and len(all_handymen) == 1:
+            flash("We have no handyman With 5 stars to get the service please try again later")
+        else:
+            db.session.rollback()
+            flash("We have sent a notification to {} of our most skilled workers".format(message_sent_count))
+
         db.session.add(service)
         db.session.commit()
         flash("Added Service Successfully")
         return redirect(url_for("core.servicelist"))
-    return render_template("service.html", form=form, services=services)
+    return render_template("service.html", form=form, services=services, services_types=serivce_types)
 
 #OCCUPANT'S PAGE TO UPDATE THE REQUESTED SERVICE
 @core.route("/updateService/<int:service_id>", methods=["GET", "POST"])
 @login_required
 def updateService(service_id):
     service = Service.query.get(service_id)
+    inital_service_requested = service.service_requested
+    inital_service_date = service.request_date
+    service_type = ServiceType.query.get(service.service_type)
     form = ServiceForm(request.form, obj=service)
+    form.serivce_type.choices = [(service_type.id, service_type.service)]
+    form.serivce_type.description = "Service Type Can not changed as we sent SMS already and may one of handyman accepted and on his way to you if you need new type create new task, and avoid confirm service without need it"
+    form.serivce_type.validators = []
+    form.serivce_type.validate_choice = False
+
+    form.serivce_type.render_kw = {'disabled': True, 'required': False}
     if form.validate_on_submit():
         form.populate_obj(service)
-        db.session.commit()
-        flash("Updated Service Successfully")
+        service_updated  = inital_service_requested != form.service_requested.data
+        request_date_update = inital_service_date != form.request_date.data
+        changes_deteacted = False
+        if service_updated:
+            service.service_requested = "%s" %form.service_requested.data
+            changes_deteacted = True
+        if request_date_update:
+            service.request_date = "%s" %form.request_date.data
+            changes_deteacted = True
+
+        if changes_deteacted:
+            service.update()
+            flash("Updated Service Successfully")
+        else:
+            flash("No New Changes Detacted")
         return redirect(url_for("core.servicelist"))
+
     return render_template("service.html", form=form, services=Service.query.all())
 
 #OCCUPANTS DELETION OF REQUESTED SERVICE
@@ -553,8 +664,10 @@ def updateService(service_id):
 @login_required
 def deleteService(service_id):
     service = Service.query.get(service_id)
+    service_title = service.service_requested
     db.session.delete(service)
     db.session.commit()
+    flash("Successfully Deleted {}".format(service_title))
     return redirect(url_for("core.servicelist"))
 
 #OCCUPANTS VIEW OF ALL REQUESTED LISTS
@@ -1019,3 +1132,186 @@ def serviceapply():
     final_data = {'handyman': db_handyman.id, 'service_meta': new_service_meta.id, 'service_id': db_service.id, 'service_code': db_service.code}
     flash("Congratulations on accepting this service, hurry up to the customer by {} or else you will lose 1 star from your rating".format(new_service_meta.expire_date))
     return render_template("service_progresss.html", data=final_data, redirected=True, start=True)
+
+
+
+@core.route('/reset-confirm', methods=['GET', 'POST'])
+def reset_confirm():
+    if not current_user.is_anonymous:
+        flash("You Are Logged In Already..")
+        return redirect(url_for('core.index'))
+
+    if 'uid' not in request.args or 'token' not in request.args or 'code' not in  request.args:
+        flash("invalid or expired reset url used..")
+        return redirect(url_for('core.reset_password'))
+
+
+
+    request_userid = "%s" %request.args["uid"]
+    request_tokenid = "%s" %request.args["token"]
+    request_tokencode = "%s" %request.args["code"]
+
+    is_vaid_token = ResetPasswordTokens.query.filter_by(id=request_tokenid, hash_code=request_tokencode, user_id=request_userid).first()
+
+
+    if not is_vaid_token:
+        # token id not exist and hash not exist
+
+
+        flash("invalid or expired reset url used..")
+        return redirect(url_for('core.reset_password'))
+
+    get_user = User.query.filter_by(id=is_vaid_token.user_id).first()
+
+
+    if not get_user:
+        flash("invalid or expired reset url used..")
+        return redirect(url_for('core.reset_password'))
+
+    user_hash = get_user.password_hash
+    last_5_words_hpass = user_hash[len(user_hash)-5:len(user_hash)]
+    beforelast_5_words_hpass = user_hash[len(user_hash)-10:len(user_hash)-5]
+
+    code = last_5_words_hpass + str(is_vaid_token.expiry_date) + str(get_user.id) + beforelast_5_words_hpass
+
+    if str(code) != code:
+        flash("invalid or expired reset url used..")
+        return redirect(url_for('core.reset_password'))
+
+    is_avail = is_vaid_token.expiry_date > datetime.datetime.utcnow()
+    if is_avail:
+        hash_level2 = generate_password_hash(str(is_vaid_token.hash_code) + str(datetime.datetime.utcnow()))
+        is_vaid_token.hash_code = hash_level2
+        is_vaid_token.update()
+        flash("Congratulations You can reset your password now")
+        # switch securly to update password with smart change to token key this need squence
+        return redirect(url_for('core.update_password', uid=is_vaid_token.user_id, code=is_vaid_token.hash_code, token=is_vaid_token.id))
+    else:
+        flash("Sorry Url Expired reset password again")
+        return redirect(url_for('core.reset_password'))
+
+@core.route('/update-password', methods=['GET', 'POST'])
+def update_password():
+    uid = "%s" %request.args["uid"]
+    token = "%s" %request.args["token"]
+    code = "%s" %request.args["code"]
+
+    is_vaid_token = ResetPasswordTokens.query.filter_by(id=token, hash_code=code, user_id=uid).first()
+
+    if is_vaid_token.expiry_date < datetime.datetime.utcnow():
+        flash("Sorry Url Expired reset password again")
+        return redirect(url_for('core.reset_password'))
+
+    if is_vaid_token:
+        updateForm = UpdatePassword(request.form)
+        if request.method == 'POST':
+            if updateForm.validate_on_submit():
+                if updateForm.password.data is not None:
+                    is_vaid_token.user.password_hash = generate_password_hash(updateForm.password.data)
+                    is_vaid_token.expired = True
+                    is_vaid_token.user.update()
+                    flash("You updated the password Successfully..")
+                    return redirect(url_for('core.login'))
+                else:
+                    flash("Please enter a valid password")
+                    return render_template('resetpass.html', form=updateForm, level=3)
+
+
+        return render_template('resetpass.html', form=updateForm, level=3)
+    else:
+        flash("Sorry Invalid URL or Maybe Expired")
+        return redirect(url_for('core.reset_password'))
+
+
+@core.route('/reset-password', methods=['GET', 'POST'])
+def reset_password():
+    if not current_user.is_anonymous:
+        flash("You Are Logged In Already..")
+        return redirect(url_for('core.index'))
+
+    resetForm = ResetPassword(request.form)
+    if request.method == 'POST':
+        if resetForm.validate_on_submit():
+            user = User.query.filter_by(username=resetForm.email.data).first()
+
+            if not user:
+                flash("This Email Is not exist")
+                return render_template('resetpass.html', form=resetForm, level=1)
+
+            user_active_tokens = ResetPasswordTokens.query.filter(ResetPasswordTokens.expiry_date > datetime.datetime.utcnow()).filter(ResetPasswordTokens.user_id==user.id).first()
+            if user_active_tokens:
+                remain = user_active_tokens.expiry_date - datetime.datetime.utcnow()
+                remain_minutes = remain.seconds//60
+                flash("We send you Already the reset link on your email please check your email, Link are still vaild for about {} Minute".format(remain_minutes))
+                return render_template('resetpass.html', form=resetForm, level=2)
+
+            # new request after expired
+
+            try:
+                # make old token expired
+                old_tokens = ResetPasswordTokens.query.filter(ResetPasswordTokens.expiry_date < datetime.datetime.utcnow()).filter(ResetPasswordTokens.user_id==user.id).filter(ResetPasswordTokens.expired==False).all()
+                if len(old_tokens) > 0:
+                    for token in old_tokens:
+                        token.expired = True
+                        token.update()
+
+                createdate = datetime.datetime.utcnow()
+                expire_createdate = createdate + datetime.timedelta(minutes=5)
+                last_5_words_hpass = user.password_hash[len(user.password_hash)-5:len(user.password_hash)]
+                beforelast_5_words_hpass = user.password_hash[len(user.password_hash)-10:len(user.password_hash)-5]
+
+                code = last_5_words_hpass + str(expire_createdate) + str(user.id) + beforelast_5_words_hpass
+                unique_hash =  generate_password_hash(code)
+                createnewToken = ResetPasswordTokens(hash_code=unique_hash, create_date=createdate, expiry_date=expire_createdate, user_id=user.id)
+                createnewToken.insert()
+                query_paremeters = "?uid={}&code={}&token={}".format(user.id, createnewToken.hash_code, createnewToken.id)
+                reset_url = dynamic_endpointurl("reset-confirm", query_paremeters)
+                user_email = createnewToken.user.username
+
+                msg = Message(
+                        subject='Reset Password URL',
+                        recipients=[user_email],
+                        sender='Admin Estate App')
+                mail_message = 'To Reset Password Click On this link: \n %s' %reset_url
+                msg.body = mail_message
+                email_sent = mail.send(msg)
+                flash("We Sent Reset Link On your Email %s Please click on this link"%user_email)
+                return render_template('resetpass.html', form=resetForm, level=2)
+
+            except:
+                flash("unexpected error occurred while reset your password please contact us")
+                return render_template('resetpass.html', form=resetForm, level=1)
+
+        else:
+            flash("Could not send data Reset request invalid email")
+            return render_template('resetpass.html', form=resetForm, level=1)
+    else:
+        return render_template('resetpass.html', form=resetForm, level=1)
+
+
+
+
+"""
+# remeber me
+@core.route('/cookie')
+def remeber_me():
+    cookie_id = 'as1'
+    username = request.cookies.get(cookie_id)
+    #cookie_key = request.cookies.get(cookie_id)
+    #cookie_salt = request.cookies.get(cookie_id)
+    data = {'cookie_id': cookie_id, 'username':username, 'message': 'create New cookie'}
+    response = app.response_class(
+            response=json.dumps(data),
+            status=200,
+            mimetype='application/json'
+        )
+    if username:
+        return response
+    else:
+        username = 'newuser2'
+        response.set_cookie(cookie_id, username)
+        data = {'cookie_id': cookie_id, 'message': 'Created new cookie'}
+        response.response = json.dumps(data)
+    return response
+
+"""

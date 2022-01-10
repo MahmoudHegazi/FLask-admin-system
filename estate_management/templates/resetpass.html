@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% block content %}
+{% if form and level==1 %}
+  <form action="" method="POST">
+
+    <div class="jumbotron">
+      <div align='center'>
+        <h1 >Forget Password</h1>
+
+        <div class="container">
+          <form  method="POST" action = "">
+            {{ form.hidden_tag() }}
+
+            <div class="col-auto my-1">
+              <div class="form-group col-md-4">
+                {{form.email(class='form-control', placeholder="Enter Your Email")  }}
+              </div>
+            </div>
+
+            <div class="form-group">
+                {{ form.submit(class="btn btn-primary") }}
+            </div>
+          </form>
+
+        </div>
+      </div>
+    </div>
+  </form>
+{% elif level==2 %}
+  <p>Reset link sent to your email please click on it</p>
+  <a class="btn btn-success" href="/login">Login</a>
+
+{% elif form and level==3 %}
+<form action="" method="POST">
+
+  <div class="jumbotron">
+    <div align='center'>
+      <h1 >Change Password</h1>
+
+      <div class="container">
+        <form  method="POST" action = "">
+          {{ form.hidden_tag() }}
+
+          <div class="col-auto my-1">
+            <div class="form-group col-md-4">
+              {{form.password(class='form-control', placeholder="Enter Your Password")  }}
+            </div>
+          </div>
+          <div class="col-auto my-1">
+            <div class="form-group col-md-4">
+              {{form.pass_confirm(class='form-control', placeholder="Confirm Password")  }}
+            </div>
+          </div>
+
+          <div class="form-group">
+              {{ form.submit(class="btn btn-primary") }}
+          </div>
+        </form>
+
+      </div>
+    </div>
+  </div>
+</form>
+{% else %}
+  <p>No Data Here Try again</p>
+{% endif %}
+{% endblock content %}

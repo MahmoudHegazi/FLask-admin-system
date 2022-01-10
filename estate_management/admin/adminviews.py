@@ -26,7 +26,7 @@ from flask_wtf import FlaskForm
 from flask_wtf import Form
 from wtforms.widgets import TextArea, PasswordInput
 from werkzeug.datastructures import MultiDict
-from wtforms.fields.html5 import DateField
+from wtforms.fields.html5 import DateField, EmailField
 from wtforms import SubmitField, HiddenField,StringField, TextAreaField,BooleanField, TextField, IntegerField, DateTimeField, PasswordField, RadioField, SelectMultipleField, ValidationError,SelectField, widgets, FileField
 from wtforms.validators import Required as required, Length, AnyOf, ValidationError
 from flask_admin.form import SecureForm, rules
@@ -310,6 +310,7 @@ class AdminUsersView(ModelView):
         using extra js in render method allow use
         url_for that itself requires an app context
         """
+
         # print(User.query.all()[0].telephone)
         # print(db.session.query(Publication).filter(Publication.users.in_(User.query.filter_by(id=1).all)).all())
         # print(db.session.query(Publication, User).filter(Publication.users.id==1).all())
@@ -361,7 +362,11 @@ class AdminUsersView(ModelView):
 
     def on_model_change(self, form, User, is_created):
         # role number one JS diffrent than python nested condition check
+
+
+
         if is_created:
+
             # if is_created check for the second check
             if form.password.data is None or form.password.data == '':
                 raise ValidationError("Password Can not Be Empty")
@@ -434,6 +439,7 @@ class AdminUsersView(ModelView):
            # del form.password
     # Form will now use all the other fields in the model
 
+
     # Add our own password form field - call it password2 idea 2 for js validate_choice=False
     form_extra_fields = {
         'streetname': SelectField(
@@ -441,7 +447,7 @@ class AdminUsersView(ModelView):
             coerce=str,
             choices=([street.streetname for street in db.session.query(StreetsMetadata).all()]),
             render_kw={'onchange': "myFunction()"},
-            validate_choice=True
+            validate_choice=False
             ),
         'password': PasswordField(
             'password'
@@ -449,6 +455,7 @@ class AdminUsersView(ModelView):
         'profile_image': FileUploadField('profile_image',
                                       base_path=file_path)
     }
+
     # inline editable fildes
     column_editable_list = ['firstname','gender','lastname', 'streetname', 'flatnumber', 'user_role', 'user_estate']
 
@@ -458,6 +465,7 @@ class AdminUsersView(ModelView):
         'dateofbirth': DateField,
         'role': SelectMultipleField,
         'telephone': StringField,
+        'username': EmailField,
     }
 
     # selectbox from strings good for role
@@ -487,8 +495,9 @@ class AdminUsersView(ModelView):
             'validators': [required()],
             },
             'username': {
-            'label': 'Username',
-            'description': 'Username Cannot start with a number',
+            'label': 'Email Address',
+            'description': 'Enter Username (a valid email address)',
+            'render_kw': {"placeholder": "Email Address"},
             'validators': [required()]
             },
             # id used in user.js to add custom toggle
@@ -753,8 +762,38 @@ class AdminGuestsView(SuperAdminModelView):
 #on_form_prefill(form,id) @super_admin_permission.require(http_exception=403)
 
 class AdminCodeGen(SuperAdminModelView):
+    form_base_class = SecureForm
+    column_type_formatters = MY_DEFAULT_FORMATTERS
+    can_view_details = True
+    # open bootstrap modal when click create instead of page
+    create_modal = True
+
+    edit_modal = True
+    column_filters = ['gen_date', 'user_id', 'gen_code', 'user_estate']
+    column_sortable_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_estate.id', 'user_id', 'unused')
+    column_searchable_list = ['gen_code', 'requested_for', 'user_id', 'gen_date']
+    column_editable_list = ['requested_for', 'gen_code', 'user_estate', 'user_role']
+    column_create_list = ('requested_for', 'gen_code', 'gen_date', 'user_id', 'user_role')
+    form_excluded_columns = ['id', 'unused', 'user']
+    column_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_role', 'code_estate', 'user_id', 'unused', 'type')
+
+    def render(self, template, **kwargs):
+        self.extra_js = [url_for("static", filename="admin/js/phonenumbers_modal.js"), "https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/js/intlTelInput.min.js"]
+        self.extra_css = ['https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/css/intlTelInput.css']
+        response = render_miror(self, template, **kwargs)
+        return response
+
     # take care is_created true if it create form so we need to check it to add valdation to create not edit
     def on_model_change(self, form, model, is_created):
+
+        if "telephone" in form and form.telephone.data is not None:
+            try:
+                submitted_number = str(form.telephone.data)
+                valdaite_num = phonenumbers.parse(submitted_number)
+                if not phonenumbers.is_valid_number(valdaite_num):
+                    raise ValidationError("invalid phone number")
+            except:
+                raise ValidationError("invalid phone number")
         # print(form.type.data)
         if not current_user.is_anonymous and is_created:
             model.user_id = current_user.id
@@ -778,18 +817,10 @@ class AdminCodeGen(SuperAdminModelView):
     # callback
 
     # view Customiztion
-    form_base_class = SecureForm
-    column_type_formatters = MY_DEFAULT_FORMATTERS
-    can_view_details = True
-    create_modal = True
-    edit_modal = True
-    column_filters = ['gen_date', 'user_id', 'gen_code', 'user_estate']
-    column_sortable_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_estate.id', 'user_id', 'unused')
-    column_searchable_list = ['gen_code', 'requested_for', 'user_id', 'gen_date']
-    column_editable_list = ['requested_for', 'gen_code', 'user_estate', 'user_role']
-    column_create_list = ('requested_for', 'gen_code', 'gen_date', 'user_id', 'user_role')
-    form_excluded_columns = ['id', 'unused', 'user']
-    column_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_role', 'code_estate', 'user_id', 'unused', 'type')
+
+    form_extra_fields = {
+        'telephone': StringField('telephone')
+    }
 
     """
     def filter_func():
@@ -1113,8 +1144,10 @@ class EstateAdminView(AdminEstateModelView):
 
         #cond = or_(*[self.model.query.user_role == person for person in people])
         # one_to_many filter by role (forgien key)
-        if 'form' in kwargs and 'streetname' in kwargs['form'] and 'choices' in vars(kwargs['form'].streetname):
-            kwargs['form'].streetname.choices = [street.streetname for street in StreetsMetadata.query.filter_by(estate_id=current_user.user_estate.id).all()]
+        streets = len(StreetsMetadata.query.all())
+        if streets:
+            if 'form' in kwargs and 'streetname' in kwargs['form'] and 'choices' in vars(kwargs['form'].streetname):
+                kwargs['form'].streetname.choices = [street.streetname for street in StreetsMetadata.query.filter_by(estate_id=current_user.user_estate.id).all()]
         kwargs['data'] = self.model.query.filter_by(estate=current_user.estate).filter(not_(self.model.role.in_([1,2]))).all()
         self.extra_js = [url_for("static", filename="admin/js/users.js"), url_for("static", filename="admin/js/phonenumbers.js"), "https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/js/intlTelInput.min.js"]
         self.extra_css = ['https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/css/intlTelInput.css']
@@ -1168,15 +1201,7 @@ class EstateAdminView(AdminEstateModelView):
         allowed_rules = ['guard', 'occupant', 'guest', 'temp']
 
         if is_created:
-            print("....................")
-            img = Image.open(form.profile_image.data)
-            img = img.convert('L')
-            file_path = op.join(op.dirname(__file__), 'static/images/{}'.format(form.profile_image.data.filename))
-            # file_path = op.join(url_for('static', filename=form.profile_image.data.filename))
-            img.save(file_path)
-            print(file_path)
-            print(img.size)
-            print("....................")
+
             # if is_created check for the second check
             if form.password.data is None or form.password.data == '':
                 raise ValidationError("Password Can not Be Empty")
@@ -1202,6 +1227,39 @@ class EstateAdminView(AdminEstateModelView):
             except:
                 raise ValidationError("invalid phone number")
 
+
+        if is_created == True and 'profile_image' in form:
+            # this will display the id before commit
+            file_name = form.profile_image.data.filename
+            try:
+                file_extension = file_name.split(".")[len(file_name.split("."))-1]
+                file_name = User.firstname.strip().lower() + "_" + str(User.id) + "." + file_extension.lower()
+                file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                save_image_please(form.profile_image.data, file_path)
+                User.profile_image = file_name
+            except:
+                raise ValidationError("Image Could not be saved Please try another one")
+
+
+
+        if is_created == False and form.profile_image.data != User.profile_image:
+            file_name = form.profile_image.data.filename
+            try:
+                file_extension = file_name.split(".")[len(file_name.split("."))-1]
+                file_name = User.firstname.strip().lower() + "_" + str(User.id) + "." + file_extension.lower()
+            except:
+                # incase unexpected error happend try to save the image as the original path
+                try:
+                    file_name = form.profile_image.data.filename
+                except:
+                    raise ValidationError("Image Could not be saved Please try another one")
+                finally:
+                    file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                    save_image_please(form.profile_image.data, file_path)
+            finally:
+                file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                save_image_please(form.profile_image.data, file_path)
+            User.profile_image = file_name
         # last part on my custom code to valdaite the inputed value incase html inspect change while submit form
     # Form will now use all the other fields in the model
 
@@ -1221,6 +1279,7 @@ class EstateAdminView(AdminEstateModelView):
     form_overrides = {
         'dateofbirth': DateField,
         'telephone': StringField,
+        'username': EmailField
 
     }
 
@@ -1254,8 +1313,8 @@ class EstateAdminView(AdminEstateModelView):
             'validators': [required()],
             },
             'username': {
-            'label': 'Username',
-            'description': 'Username Cannot start with a number',
+            'label': 'Email Address',
+            'description': 'Enter Username (a valid email address)',
             'validators': [required()]
             },
             'flatnumber': {
@@ -1286,7 +1345,7 @@ class EstateAdminView(AdminEstateModelView):
         ),
         'user_estate': sqla.fields.QuerySelectField(
             label='The Estate',
-            query_factory= lambda:Estate.query.filter(Estate.id == current_user.user_estate.id).all(),
+            query_factory= lambda:Estate.query.filter(Estate.id == current_user.user_estate.id).all() if current_user.user_estate else [],
             widget=Select2Widget()
         ),
         'streetname': SelectField(
@@ -1296,9 +1355,7 @@ class EstateAdminView(AdminEstateModelView):
             render_kw={'onchange': "myFunction()"},
             validate_choice=False
             ),
-        'password': PasswordField(
-            'password'
-            ),
+        'password': PasswordField('password'),
         'profile_image': FileUploadField('profile_image',
                                       base_path='../static/images')
     }
@@ -1458,6 +1515,28 @@ class EstateAdminHandyMenView(AdminEstateModelView):
 
 
     def on_model_change(self, form, HandyMan, is_created):
+        if is_created:
+            if form.passport_photo.data:
+                # this will display the id before commit
+                file_name = form.passport_photo.data.filename
+                try:
+                    file_extension = file_name.split(".")[len(file_name.split("."))-1]
+                    file_name = HandyMan.fullname.strip().lower() + "_" + 'passport_photo_id' + str(HandyMan.id) + "." + file_extension.lower()
+                except:
+                    # incase unexpected error happend try to save the image as the original path
+                    try:
+                        file_name = form.passport_photo.data.filename
+                    except:
+                        raise ValidationError("Image Could not be saved Please try another one")
+                    finally:
+                        file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                        save_image_please(form.passport_photo.data, file_path)
+                finally:
+                    file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                    save_image_please(form.passport_photo.data, file_path)
+
+                HandyMan.passport_photo = file_name
+                HandyMan.update()
 
         if "telephone" in form and form.telephone.data is not None:
             try:
@@ -1468,8 +1547,28 @@ class EstateAdminHandyMenView(AdminEstateModelView):
             except:
                 raise ValidationError("invalid phone number")
 
+        if is_created == False and form.passport_photo.data != User.passport_photo:
+            file_name = form.passport_photo.data.filename
+            try:
+                file_extension = file_name.split(".")[len(file_name.split("."))-1]
+                file_name = User.firstname.strip().lower() + "_" + str(User.id) + "." + file_extension.lower()
+            except:
+                # incase unexpected error happend try to save the image as the original path
+                try:
+                    file_name = form.passport_photo.data.filename
+                except:
+                    raise ValidationError("Image Could not be saved Please try another one")
+                finally:
+                    file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                    save_image_please(form.passport_photo.data, file_path)
+            finally:
+                file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                save_image_please(form.passport_photo.data, file_path)
+            User.passport_photo = file_name
+            User.update()
     form_overrides = {
-      'bank_account_number': StringField
+      'bank_account_number': StringField,
+      'passport_photo': FileUploadField
     }
     form_excluded_columns = ['estate']
     form_extra_fields = {
@@ -1479,53 +1578,26 @@ class EstateAdminHandyMenView(AdminEstateModelView):
             widget=Select2Widget(),
             validators = [validators.DataRequired()]
         ),
+        'passport_photo': FileUploadField('passport_photo',
+                                      base_path=file_path)
+    }
+    # for image in view
+    def _list_thumbnail(view, context, model, name):
+        if not model.passport_photo:
+            return ''
+        return Markup('<img height="%s" width="%s" src="%s">' % (150, 150, url_for('static', filename='images/'+model.passport_photo)))
+
+    column_formatters = {
+        'passport_photo': _list_thumbnail
     }
 
-
-
-    """
-
-    column_create_list = (User.firstname, User.lastname, User.dateofbirth, User.username, User.password_hash, User.streetname, User.housenumber, User.flatnumber, User.gender, User.telephone, User.role, User.estate)
-        'user_role': sqla.fields.QuerySelectField(
-            label='User role',
-            query_factory= lambda:Role.query.filter(Role.name != 'superadmin').filter(Role.name != 'estateadmin').all(),
-            widget=Select2Widget()
-        ),
-        'user_estate': sqla.fields.QuerySelectField(
-            label='The Estate',
-            query_factory= lambda:Estate.query.filter(Estate.id == current_user.user_estate.id).all(),
-            widget=Select2Widget()
-        ),
-        'streetname': SelectField(
-            'streetname',
-            coerce=str,
-            choices=([street.streetname for street in StreetsMetadata.query.all()]),
-            render_kw={'onchange': "myFunction()"},
-            validate_choice=False
-            ),
-        'password': PasswordField(
-            'password'
-            ),
-    column_filters = ['request_date', 'user_id', 'service_requested']
-    column_searchable_list = ['id', 'user_id', 'request_date', 'service_requested']
-    column_editable_list = ['service_requested', 'user_id', 'request_date']
-
-    column_default_sort = [('request_date', True)]
-    column_sortable_list = ('service_requested','user_id', 'request_date', 'request_date', 'id')
-    column_create_list = ('service_requested', 'request_date')
-    column_list = ('id','requester', 'service_requested', 'request_date')
-    form_args = {
-            'service_requested': {
-            'label': 'Service Requested',
-            'validators': [required()]
-            },
-            'request_date': {
-            'label': 'Request Date',
-            'id': 'req_date',
-            'validators': [required()]
-            }
-    }
-    """
+    column_filters = ['address', 'bank_account_name','bank_account_number', 'rate']
+    column_searchable_list = ['fullname', 'address', 'telephone', 'bank_account_name', 'bank_account_number']
+    column_editable_list = ['fullname', 'address', 'bank_account_name', 'bank_account_number']
+    column_default_sort = [('rate', True)]
+    column_sortable_list = ('fullname', 'address', 'telephone', 'bank_account_name', 'bank_account_number', 'id', 'rate')
+    # column_create_list = ('service_requested', 'request_date')
+    column_list = ('id', 'passport_photo', 'fullname', 'address', 'telephone', 'bank_account_name', 'bank_account_number', 'rate')
 
 class EstateAdminCodeGen(AdminEstateModelView):
 
@@ -1537,12 +1609,21 @@ class EstateAdminCodeGen(AdminEstateModelView):
         # query the codes that only related to estate-admin current logged estate and the roles not superadmin or estateadmin users
         kwargs['data'] = self.model.query.filter_by(user_estate=current_user.estate).filter(not_(self.model.user_role.in_([1,2]))).all()
         # kwargs['data'] = self.model.query.filter(self.model.user_estate == current_user.user_estate, not_(self.model.user_role.in_([1,2]))).all()
-        self.extra_js = [url_for("static", filename="admin/js/users.js")]
+        self.extra_js = [url_for("static", filename="admin/js/phonenumbers.js"), "https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/js/intlTelInput.min.js"]
+        self.extra_css = ['https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/css/intlTelInput.css']
         response = render_miror(self, template,**kwargs)
         return response
 
     # take care is_created true if it create form so we need to check it to add valdation to create not edit
     def on_model_change(self, form, model, is_created):
+        if "telephone" in form and form.telephone.data is not None:
+            try:
+                submitted_number = str(form.telephone.data)
+                valdaite_num = phonenumbers.parse(submitted_number)
+                if not phonenumbers.is_valid_number(valdaite_num):
+                    raise ValidationError("invalid phone number")
+            except:
+                raise ValidationError("invalid phone number")
         if current_user and not current_user.is_anonymous and is_created:
             model.user_id = current_user.id
         else:
@@ -1579,7 +1660,7 @@ class EstateAdminCodeGen(AdminEstateModelView):
     column_sortable_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_estate.id', 'user_id', 'unused')
     column_searchable_list = ['gen_code', 'requested_for', 'user_id', 'gen_date']
     column_editable_list = ['requested_for', 'gen_code', 'user_estate', 'user_role']
-    column_create_list = ('requested_for', 'gen_code', 'gen_date', 'user_id', 'user_role')
+    column_create_list = ('requested_for', 'telephone', 'gen_code', 'gen_date', 'user_id', 'user_role')
     form_excluded_columns = ['id', 'unused', 'user']
     column_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_role', 'code_estate', 'user_id', 'unused')
 
@@ -1595,7 +1676,8 @@ class EstateAdminCodeGen(AdminEstateModelView):
             label='User Role',
             query_factory= lambda:Role.query.filter(not_(Role.id.in_([1,2]))).all(),
             widget=Select2Widget()
-        )
+        ),
+        'telephone': StringField('telephone')
     }
     form_overrides = {
       'gen_code': StringField,
@@ -1915,7 +1997,7 @@ import datetime
 def gethouses():
     request_data = request.args
     if request_data and 'street' in request_data:
-        street = StreetsMetadata.query.filter_by(streetname = request_data['street']).one_or_none()
+        street = StreetsMetadata.query.filter_by(streetname = request_data['street']).first()
         if street:
             street_houses = lambda:giveMeAllHousesList(street.excluded, street.min, street.max)
             response = {'code': 200, 'houses': street_houses(), 'selected': 0}

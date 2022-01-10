@@ -23,6 +23,25 @@ function addJsCodes(){
 }
 
 $( document ).ready(function() {
-  const isFormHere = document.querySelector("form.admin-form");
-  if (isFormHere){addJsCodes();}
+  const create_button = document.querySelector("a[title='Create New Record']");
+    const addInput = addJsCodes();
+    if (create_button){
+
+      create_button.addEventListener("click", checkTelphoneInput);
+      let checkTelphoneTimeout;
+      let canceled = false;
+      function checkTelphoneInput() {
+
+        if (document.getElementById("telephone")){
+          clearTimeout(checkTelphoneTimeout);
+          addJsCodes();
+          console.log("found");
+          return false;
+        } else {
+          console.log("wait");
+          checkTelphoneTimeout = setTimeout(checkTelphoneInput, 300);
+          return true;
+        }
+      }
+  }
 });

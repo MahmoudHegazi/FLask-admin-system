@@ -6,6 +6,7 @@ from flask_migrate import Migrate
 from flask_login import LoginManager, login_user, current_user, logout_user, login_required
 #from flask_security import Security, SQLAlchemyUserDatastore, \
 #    UserMixin, RoleMixin, login_required, current_user
+from flask_mail import Message, Mail
 from flask_security.utils import encrypt_password
 from .config import LANGUAGES
 import flask_admin as estate_admin
@@ -35,8 +36,23 @@ twilio_sid = os.environ['TWILIO_SID']
 twilio_token = os.environ['TWILIO_TOKEN']
 twilio_number = os.environ['TWILIO_NUMBER']
 
-print(twilio_sid)
-print(twilio_token)
+temp_gmail_user = os.environ['GMAIL_USER']
+temp_gmail_pass = os.environ['GMAIL_PASS']
+
+# print(twilio_sid)
+# print(twilio_token)
+
+app.config.update(dict(
+    DEBUG=True,
+    MAIL_SERVER='smtp.gmail.com',
+    MAIL_PORT=587,
+    MAIL_USE_TLS=True,
+    MAIL_USE_SSL=False,
+    MAIL_USERNAME=temp_gmail_user,
+    MAIL_PASSWORD=temp_gmail_pass,
+))
+mail = Mail(app)
+
 
 #app.config['SECURITY_RECOVERABLE'] = True
 #app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024
@@ -66,7 +82,10 @@ login_manager.login_view = 'core.login'
 
 admin = admin.Admin(name="adminapp")
 
-
+# return dynamic url
+def create_dynamic_url(url_data):
+    the_base_url = str(request.base_url.split("/")[0] + "//" + request.host + "/")
+    return the_base_url + str(url_data)
 
 # this test idea for default database value to add user dynamic
 def getMeLoggedUser():
