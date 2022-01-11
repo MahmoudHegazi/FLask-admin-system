@@ -792,8 +792,32 @@ class AdminCodeGen(SuperAdminModelView):
                 valdaite_num = phonenumbers.parse(submitted_number)
                 if not phonenumbers.is_valid_number(valdaite_num):
                     raise ValidationError("invalid phone number")
-            except:
-                raise ValidationError("invalid phone number")
+
+                if phonenumbers.is_valid_number(valdaite_num):
+                    # if this only create new guest send the notification note this custom valdation for custom view not for any phone
+                    try:
+                        if is_created:
+                            if "requested_for" in form and form.requested_for.data is not None:
+                                if "gen_code" in form and form.gen_code.data is not None:
+                                    try:
+                                        message = "hi {} your registration code is: {}".format(form.requested_for.data, form.gen_code.data)
+                                        message_sent = did_you_send_notification(str(form.telephone.data), message, ['code', 'code'])
+                                        if message_sent['sent']:
+                                            Code.notification_sent = True
+                                            flash(message_sent['message'])
+                                        else:
+                                            # if message could not be sent not let him pass
+                                            raise ValidationError(message_sent['message'])
+                                    except Exception as e:
+                                        raise ValidationError("We were unable to send a notice to the new user. Make sure it's a valid number, error: {}".format(str(e)))
+
+                    except Exception as e:
+                        raise ValidationError("We were unable to send the registration code to new user, System error: {}".format(str(e)))
+
+                else:
+                    raise ValidationError("invalid phone number {}".format(submitted_number))
+            except Exception as e:
+                raise ValidationError("Cannot create code because {}".format(str(e)))
         # print(form.type.data)
         if not current_user.is_anonymous and is_created:
             model.user_id = current_user.id
