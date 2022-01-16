@@ -27,6 +27,7 @@ stripe.api_key = "sk_test_BQokikJOvBiI2HlWgH4olfQ2"
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'mysecretkey'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 cryptor = rncryptor.RNCryptor()
 
 # This required system variables to send messages

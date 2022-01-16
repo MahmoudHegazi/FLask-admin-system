@@ -376,20 +376,23 @@ class AdminUsersView(ModelView):
             try:
                 file_extension = file_name.split(".")[len(file_name.split("."))-1]
                 file_name = User.firstname.strip().lower() + "_" + str(User.id) + "." + file_extension.lower()
+                file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                save_image_please(form.profile_image.data, file_path)
+                User.profile_image = file_name
+                User.update()
             except:
                 # incase unexpected error happend try to save the image as the original path
                 try:
                     file_name = form.profile_image.data.filename
-                except:
-                    raise ValidationError("Image Could not be saved Please try another one")
-                finally:
                     file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
                     save_image_please(form.profile_image.data, file_path)
-            finally:
-                file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
-                save_image_please(form.profile_image.data, file_path)
-            User.profile_image = file_name
-            User.update()
+                    User.profile_image = file_name
+                    User.update()
+                except:
+                    raise ValidationError("Image Could not be saved Please try another one")
+
+
+
 
         # valdaite phone using phonenumbers library
         if "telephone" in form and form.telephone.data is not None:
@@ -769,13 +772,13 @@ class AdminCodeGen(SuperAdminModelView):
     create_modal = True
 
     edit_modal = True
-    column_filters = ['gen_date', 'user_id', 'gen_code', 'user_estate']
+    column_filters = ['gen_date', 'user_id', 'gen_code','telephone', 'user_estate']
     column_sortable_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_estate.id', 'user_id', 'unused')
-    column_searchable_list = ['gen_code', 'requested_for', 'user_id', 'gen_date']
+    column_searchable_list = ['gen_code','telephone', 'requested_for', 'user_id', 'gen_date']
     column_editable_list = ['requested_for', 'gen_code', 'user_estate', 'user_role']
-    column_create_list = ('requested_for', 'gen_code', 'gen_date', 'user_id', 'user_role')
+    column_create_list = ('requested_for', 'gen_code', 'telephone', 'gen_date', 'user_id', 'user_role')
     form_excluded_columns = ['id', 'unused', 'user']
-    column_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_role', 'code_estate', 'user_id', 'unused', 'type')
+    column_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'telephone', 'code_role', 'code_estate', 'user_id', 'unused', 'type')
 
     def render(self, template, **kwargs):
         self.extra_js = [url_for("static", filename="admin/js/phonenumbers_modal.js"), "https://cdnjs.cloudflare.com/ajax/libs/intl-tel-input/16.0.4/js/intlTelInput.min.js"]
@@ -842,9 +845,7 @@ class AdminCodeGen(SuperAdminModelView):
 
     # view Customiztion
 
-    form_extra_fields = {
-        'telephone': StringField('telephone')
-    }
+
 
     """
     def filter_func():
@@ -1680,13 +1681,13 @@ class EstateAdminCodeGen(AdminEstateModelView):
     column_type_formatters = MY_DEFAULT_FORMATTERS
     can_view_details = True
     edit_modal = True
-    column_filters = ['gen_date', 'user_id', 'gen_code', 'user_estate']
+    column_filters = ['gen_date', 'user_id', 'telephone', 'gen_code', 'user_estate']
     column_sortable_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_estate.id', 'user_id', 'unused')
-    column_searchable_list = ['gen_code', 'requested_for', 'user_id', 'gen_date']
+    column_searchable_list = ['gen_code', 'telephone', 'requested_for', 'user_id', 'gen_date']
     column_editable_list = ['requested_for', 'gen_code', 'user_estate', 'user_role']
-    column_create_list = ('requested_for', 'telephone', 'gen_code', 'gen_date', 'user_id', 'user_role')
+    column_create_list = ('requested_for', 'gen_code', 'telephone', 'gen_date', 'user_id', 'user_role')
     form_excluded_columns = ['id', 'unused', 'user']
-    column_list = ('id', 'requested_for', 'gen_code', 'gen_date', 'code_role', 'code_estate', 'user_id', 'unused')
+    column_list = ('id', 'requested_for', 'gen_code', 'telephone', 'gen_date', 'code_role', 'code_estate', 'user_id', 'unused')
 
     # column_create_list = ('service_requested', 'request_date')
 
@@ -1700,8 +1701,7 @@ class EstateAdminCodeGen(AdminEstateModelView):
             label='User Role',
             query_factory= lambda:Role.query.filter(not_(Role.id.in_([1,2]))).all(),
             widget=Select2Widget()
-        ),
-        'telephone': StringField('telephone')
+        )
     }
     form_overrides = {
       'gen_code': StringField,

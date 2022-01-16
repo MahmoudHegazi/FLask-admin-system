@@ -329,6 +329,7 @@ class Code(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     requested_for = db.Column(db.String, nullable=False)
     gen_code = db.Column(db.Text, nullable=False)
+    telephone = db.Column(db.Text, nullable=True)
     gen_date = db.Column(db.DateTime(), nullable=False, default=datetime.utcnow)
     unused = db.Column(db.Boolean, nullable=True, default=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), default=getMeLoggedUser(), nullable=False)
@@ -336,13 +337,14 @@ class Code(db.Model):
     user_estate = db.Column(db.Integer, db.ForeignKey('estates.id'), nullable=False)
 
 
-    def __init__(self, requested_for, user_role, user_estate, gen_date, gen_code):
+    def __init__(self, requested_for, user_role, user_estate, gen_date, gen_code, telephone):
         banned_list = [co.gen_code for co in Code.query.all()]
         self.requested_for = requested_for
         self.user_role = user_role
         self.user_estate = user_estate
         self.gen_date = gen_date
         self.gen_code = unique_code_generator(strpool, banned_list)
+        self.telephone = telephone
 
     def insert(self):
         db.session.add(self)

@@ -13,6 +13,8 @@ from flask import flash
 from estate_management.core.guardCodeGenerator import code_generator
 from datetime import datetime
 import phonenumbers
+from flask_admin.form import Select2Widget, FileUploadField
+from wtforms.validators import Required as required
 
 class MultiCheckboxField(SelectMultipleField):
     widget = widgets.ListWidget(prefix_label=False)
@@ -40,7 +42,7 @@ class UpdatePassword(FlaskForm):
     password = PasswordField('Password', validators=[DataRequired()])
     pass_confirm = PasswordField('Confirm Password', validators=[DataRequired(),EqualTo('password', message='Passwords must match')])
     submit = SubmitField('Update Password')
-    
+
 
 class CodeForm(FlaskForm):
     registrationCode = StringField('Registration code', validators=[DataRequired()])
@@ -62,6 +64,7 @@ class UserForm(FlaskForm):
     telephone = StringField('Telephone', validators=[DataRequired()])
     code = StringField('Code')
     code_fullname = StringField('CodeName')
+    profile_image = FileUploadField('profile_image', validators=[required()], allowed_extensions=['jpg', 'png', 'gif', 'jpeg'])
     # role = SelectField('Role', validators=[DataRequired()], choices=[('occupant','occupant'),('guard','guard')])
     submit = SubmitField("Register")
 
@@ -69,6 +72,13 @@ class UserForm(FlaskForm):
         # Check if not None for that username!
         if User.query.filter_by(username=field.data).first():
             raise ValidationError('Sorry, that username is taken!')
+
+    def validate_profile_image(self, field):
+        # Check if not None for that username!
+        # get image size
+        image_pre_size = field.data.stream._file.getbuffer().nbytes
+        if image_pre_size > 2000000:
+            raise ValidationError('sorry max profile image size is 2 megabyte')
 
     def validate_telephone(self, field):
         try:

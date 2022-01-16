@@ -16,7 +16,9 @@ import sys
 import datetime
 import time
 import random
-
+from PIL import Image
+import os.path as op
+import os
 
 core = Blueprint('core',__name__, template_folder='templates')
 
@@ -38,6 +40,13 @@ def getErrorMessages(errors):
                 if error_message not in error_messages and errors[key] != '':
                     error_messages.append(error_message)
     return error_messages
+
+
+def save_image_please(image_data, file_path):
+    img = Image.open(image_data)
+    img = img.convert('L')
+    img.save(file_path)
+    return True
 ################################################################################
 
 #OCCUPANTS HOME PAGE
@@ -206,12 +215,34 @@ def createUser():
                         user_form.housenumber.validate_choice = True
 
                     user_form.streetname.validate_choice = True
+            user_form.telephone.data = registrationCode.telephone
             code_submit = {'code': form_gen_code, 'name': form.fullName.data}
 
             return render_template('user.html', form=user_form, code_submit=code_submit)
     # Second Form
     elif user_form.validate_on_submit():
+        # validaite phone
         registrationCode = Code.query.filter_by(gen_code=user_form.code.data).first()
+
+        userphone = user_form.telephone.data
+        if userphone:
+            is_valid_phone = valdiate_phone(userphone)
+            if is_valid_phone == True:
+                userphone = user_form.telephone.data
+        else:
+            is_valid_phone = valdiate_phone(registrationCode.telephone)
+            if valdiate_phone(registrationCode.telephone) == True:
+                userphone = registrationCode.telephone
+            else:
+                flash("Invalid phone number")
+                return render_template('codeconfirmation.html', form=form)
+                
+        # check duplicated phone
+        is_phone_repeated = User.query.filter_by(telephone=userphone).first()
+        if is_phone_repeated:
+            flash("Phone Number already Exist If you have account Please Log In")
+            return render_template('codeconfirmation.html', form=form)
+
         if not registrationCode:
             flash("Your request cannot be processed. invalid registration Code Make sure not to edit form hidden data")
             return render_template('codeconfirmation.html', form=form)
@@ -222,8 +253,36 @@ def createUser():
             # here we have valid code and valid user in same route with 1 time form for each request
             user = User(firstname=user_form.firstname.data, lastname=user_form.lastname.data, dateofbirth=user_form.dateofbirth.data, username=user_form.username.data,
                         password_hash=user_form.password.data, streetname=user_form.streetname.data, housenumber=user_form.housenumber.data, flatnumber=user_form.flatnumber.data,
-                        gender=user_form.gender.data, estate=registrationCode.user_estate, telephone=user_form.telephone.data, role=registrationCode.code_role.id)
-            user.insert()
+                        gender=user_form.gender.data, estate=registrationCode.user_estate, telephone=userphone, role=registrationCode.code_role.id)
+
+            try:
+                db.session.add(user)
+            except:
+                flash("user could not be added")
+                return render_template('codeconfirmation.html', form=form)
+
+            # valdaite images db.session.flush()
+            if 'profile_image' in user_form:
+                file_name = user_form.profile_image.data.filename
+                try:
+                    file_extension = file_name.split(".")[len(file_name.split("."))-1]
+                    file_name = user.firstname.strip().lower() + "_" + str(user.id) + "." + file_extension.lower()
+                    file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                    img = Image.open(image_data)
+                    img = img.convert('L')
+                    img.save(file_path)
+                    save_image_please(user_form.profile_image.data, file_path)
+                    user.profile_image = file_name
+                except:
+                    file_name = user_form.profile_image.data.filename
+                    file_path = op.join(op.dirname(__file__), '../static/images/{}'.format(file_name))
+                    save_image_please(user_form.profile_image.data, file_path)
+                    # incase unexpected error happend try to save the image as the original path
+                    try:
+                        user.profile_image = file_name
+                    except:
+                        raise ValidationError("Image Could not be saved Please try another one")
+
             check_added = User.query.filter_by(username=user_form.username.data).first()
             if check_added:
                 # if user added change the code to used
@@ -232,6 +291,9 @@ def createUser():
                 flash("Added User Successfully")
                 return redirect(url_for('core.login'))
             else:
+                db.session.rollback()
+                if user:
+                    user.remove()
                 flash("An unknown error occurred while processing your request, please contact support")
                 return render_template('codeconfirmation.html', form=form)
     elif form.validate_on_submit() == False and form.registrationCode.data != '' and form.registrationCode.data is not None:
@@ -362,6 +424,11 @@ def updateUser(user_id):
     user = User.query.get(user_id)
     form = UserForm(request.form, obj=user)
     if form.validate_on_submit():
+        if 'telephone' in form and form.telephone.data != None:
+            is_valid_phone = valdiate_phone(form.telephone.data)
+            if is_valid_phone == False:
+                flash("Invalid phone number")
+                return render_template('user.html', form=form)
         form.populate_obj(user)
         db.session.commit()
         flash("Updated User Successfully")
